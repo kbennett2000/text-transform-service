@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from tts.llm import FakeLLMClient
+from tts.llm import FakeLLMClient, LLMBackendError
 from tts.pipeline import TransformError, render_messages, run_transform
 from tts.registry import Transform
 from tts.validators import banned_substrings
@@ -156,6 +156,55 @@ async def test_sleepy_generation_makes_a_concurrent_request_queue_then_time_out(
     assert exc.value.status == 503
     result = await first
     assert result["output"] == {"echo": "x"}
+
+
+async def test_second_concurrent_request_reports_positive_queued_ms():
+    # Two concurrent requests, one slot, ample queue_wait: the second QUEUES behind the first
+    # (whose fake sleeps) and then succeeds — proving meta.queued_ms > 0 (T3 acceptance).
+    t = _transform()
+    sem = asyncio.Semaphore(1)
+
+    async def slow(messages, schema, params):
+        await asyncio.sleep(0.1)
+        return '{"echo": "x"}'
+
+    def run():
+        return run_transform(t, "text", {}, FakeLLMClient(slow), sem, queue_wait_s=5.0)
+
+    first = asyncio.create_task(run())
+    await asyncio.sleep(0.02)  # let the first task grab the slot
+    second = await run()  # queues until the first releases, then runs
+
+    assert second["meta"]["queued_ms"] > 0
+    first_result = await first
+    assert first_result["meta"]["queued_ms"] == 0 or first_result["meta"]["queued_ms"] >= 0
+
+
+async def test_backend_error_is_503_model_unavailable_and_not_retried():
+    # An LLMBackendError (Ollama down/errored) maps to 503 model_unavailable, fail-fast.
+    class Down:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, schema, params):
+            self.calls += 1
+            raise LLMBackendError("connection refused", {"error": "refused"})
+
+    t = _transform(retries=2)  # retries available, but infra failure must NOT retry
+    down = Down()
+    with pytest.raises(TransformError) as exc:
+        await run_transform(t, "text", {}, down, _sem(), 5.0)
+    assert exc.value.status == 503
+    assert exc.value.code == "model_unavailable"
+    assert down.calls == 1  # not retried
+
+
+async def test_params_carry_model_binding():
+    # The transform's model tag rides in params so the shared OllamaClient targets it.
+    t = _transform(model="qwen3.5:9b")
+    fake = FakeLLMClient(['{"echo": "ok"}'])
+    await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert fake.calls[0].params["model"] == "qwen3.5:9b"
 
 
 # ---- success meta ----------------------------------------------------------------
