@@ -1,0 +1,61 @@
+"""Service configuration.
+
+Reads the environment variables documented in DESIGN §9. Every var is optional and
+has a default; nothing here is secret-by-default (LAN posture). Auth is enabled only
+when ``TRANSFORM_API_KEY`` is set (ADR-0003).
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return int(raw)
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Resolved service configuration (DESIGN §9)."""
+
+    port: int = 8712
+    host: str = "0.0.0.0"
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_keep_alive: str = "5m"
+    transform_api_key: str | None = None
+    queue_wait_s: int = 90
+    log_level: str = "INFO"
+
+    @property
+    def auth_enabled(self) -> bool:
+        """Auth is on iff an API key is configured (ADR-0003)."""
+        return self.transform_api_key is not None
+
+    @classmethod
+    def from_env(cls) -> Settings:
+        """Build settings from the process environment, applying §9 defaults."""
+        key = os.getenv("TRANSFORM_API_KEY")
+        if key is not None and key.strip() == "":
+            key = None
+        return cls(
+            port=_int_env("TTS_PORT", 8712),
+            host=os.getenv("TTS_HOST", "0.0.0.0"),
+            ollama_url=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+            ollama_keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "5m"),
+            transform_api_key=key,
+            queue_wait_s=_int_env("QUEUE_WAIT_S", 90),
+            log_level=os.getenv("TTS_LOG_LEVEL", "INFO"),
+        )
+
+
+def get_settings() -> Settings:
+    """Return settings resolved from the current environment.
+
+    Not cached: tests monkeypatch the environment and call this again. The app
+    resolves settings once at startup (see ``app.py``).
+    """
+    return Settings.from_env()
