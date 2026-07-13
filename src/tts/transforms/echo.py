@@ -4,8 +4,9 @@ Not a production transform — it exists to prove the pipeline plumbing end-to-e
 (route -> pipeline -> LLM client -> parse/validate -> meta) without a real model. It is
 registered only when ``TTS_ENV=dev`` (see :func:`tts.transforms.register_all`).
 
-Bound to ``qwen3:0.6b`` (the fast test model) so cycle T3's GPU smoke can exercise it;
-under FakeLLM the binding is never actually called.
+Bound to ``qwen3.5:2b`` (the fast test model; rebound from the absent ``qwen3:0.6b`` in
+cycle T3 — see ``docs/models.md``) so cycle T3's GPU smoke can exercise it; under FakeLLM
+the binding is never actually called.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ def build_echo() -> Transform:
         name="echo",
         version="0.1.0",
         template=_TEMPLATE,
-        model="qwen3:0.6b",
+        model="qwen3.5:2b",
         options_schema={},
         output_schema=_OUTPUT_SCHEMA,
     )
