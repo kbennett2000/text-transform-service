@@ -10,12 +10,13 @@ Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
 See `text-transform-service-DESIGN.md` for the full design and `text-transform-service-BUILD-PLAN.md`
 for the cycle-by-cycle build plan. Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
 
-> **Status:** Cycle T3 — real Ollama generation with **schema-constrained decoding** is
-> live. `POST /v1/transform/{name}` runs the full pipeline against the model, single
-> in-flight generation is serialized (queue → `503 busy` on timeout), and
-> `POST /v1/models/unload` frees VRAM. Production transforms and auth arrive in later
-> cycles (T4+). See [`docs/models.md`](docs/models.md) for the resolved model bindings and
-> two Ollama-behaviour findings that shaped the client.
+> **Status:** Cycle T4 — the first **production transform**, `image-prompt` (Brickfeed's
+> news-story → image-subject-prompt workload), is live on top of the T3 engine: the full
+> pipeline runs against the model with **schema-constrained decoding**, single in-flight
+> generation is serialized (queue → `503 busy` on timeout), and `POST /v1/models/unload`
+> frees VRAM. The remaining production transforms and auth arrive in later cycles (T5+).
+> See [`docs/models.md`](docs/models.md) for the resolved model bindings and two
+> Ollama-behaviour findings that shaped the client.
 
 ## Requirements
 
@@ -76,8 +77,23 @@ Errors always use `{"error": {"code": "...", "message": "...", "detail": {...}}}
 `422 validation_failed` (generation failed validators after retries), `503 busy`/
 `model_unavailable`, `500 internal`. **Error codes are API — a change is a breaking change.**
 
-`echo` is a **dev-only** transform (registered only when `TTS_ENV=dev`) that proves the
-pipeline plumbing against a real model.
+### Available transforms
+
+- **`image-prompt`** (production; DESIGN §7.1) — Brickfeed's workload. Send a news story;
+  get back one concise, concrete image-generation *subject* prompt (`{"prompt": "..."}`,
+  8–60 words, one line, no style/medium/camera words — those are added caller-side). Input
+  over the 3000 est-token budget is truncated on paragraph boundaries (`lede_first_n`,
+  `meta.truncated: true`). Bound to `qwen3.5:9b`. `options` is `{}`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/image-prompt \
+    -H 'content-type: application/json' \
+    -d '{"text": "MERIDAN — A magnitude 6.4 earthquake toppled the town clock tower..."}' | jq
+  # {"output": {"prompt": "A fallen brick clock tower lies shattered on a cold town square at dawn..."}, "meta": {...}}
+  ```
+
+- **`echo`** — a **dev-only** transform (registered only when `TTS_ENV=dev`) that proves the
+  pipeline plumbing against a real model. Not a real workload.
 
 Output is **schema-constrained**: the transform's `output_schema` is passed to Ollama as a
 grammar (`format`) *and* re-validated after generation; on validator failure the pipeline

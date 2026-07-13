@@ -1,5 +1,64 @@
 # Cycle Log
 
+## T4 — `image-prompt` transform (2026-07-13)
+
+**Shipped**
+- `transforms/image_prompt.py` — `build_image_prompt()`, the first **production** transform,
+  verbatim from DESIGN §7.1: output_schema (`prompt` string, 30–400 chars), the SYSTEM/USER
+  template, budget 3000 est-tokens with `lede_first_n` truncation, temp 0.4, num_predict 160,
+  `options_schema={}`, validators `banned_substrings("prompt", ["**","##","http","\n"])` +
+  `word_range("prompt", 8, 60)`. No new pipeline/validator/budget code — pure composition of
+  existing T2/T3 seams.
+- `transforms/__init__.py` — `register_all` now registers `image-prompt` **unconditionally**
+  (production transforms register in every env; `echo` stays dev-gated).
+- `tests/fixtures/news/` — 5 synthetic wire-service stories (all invented; no real articles):
+  `01_quake` (~384 w), `02_transit` (~419 w), `03_multitopic` (~332 w, bundled 3-story roundup),
+  `04_science` (~441 w), `05_flood_long` (**2311 w / 3120 est-tokens**, 28 paras — exercises
+  truncation).
+- Tests: `test_image_prompt.py` (FakeLLM) — binding/shape; short fixture happy path
+  (`truncated:false`); long fixture → `meta.truncated:true` + post-trunc est ≤ 3000; markdown-
+  polluted response → 422 with banned-substring reasons; `word_range` rejects too-few AND too-many
+  words. `test_gpu.py` — all 5 fixtures through the real pipeline on **qwen3.5:9b**, schema+validators
+  enforced by the pipeline (no-raise = pass), long fixture asserts `truncated:true`, prompts printed.
+
+**Verification**
+- `make lint` clean; `make test` → **81 passed** (75 prior + 6 new), 4 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama 0.30.7, qwen3.5:9b) → **4 passed** in ~23s.
+- Live route (`TTS_ENV=prod`, so no dev gate): `/health` ok; `POST /v1/transform/image-prompt`
+  short fixture → 200 schema-valid, `truncated:false`, `latency_ms` 2188; long fixture →
+  `truncated:true`, `input_tokens_est:2918` (post-truncation), schema-valid one-line prompt.
+
+**GPU outputs — all 5 fixtures (qwen3.5:9b, human eyeball; `attempts:1` on every one)**
+- Cold-load latency: 6431 ms (first fixture). Warm: ~2250–3492 ms.
+1. `01_quake` (truncated=False, 6431 ms cold) →
+   *A fallen century-old brick clock tower lies shattered on a cold mountain town square at dawn,
+   with cracked copper face and twisted iron frame amidst rubble while emergency crews clear debris
+   under floodlights.*
+2. `02_transit` (truncated=False, 2250 ms) →
+   *A pale green tram with its bell ringing glides along a newly laid waterfront line where gulls
+   wheel overhead and a brass band plays on the quay near an old fish market.*
+3. `03_multitopic` (truncated=False, 2305 ms) →
+   *Dawn sky filled with sixty hot-air balloons rising together over a grass meadow outside Dell,
+   including an enormous green turtle balloon drawing cheers from children lining a fence while
+   spectators watch below.* — correctly picked the most visual of 3 bundled topics (balloons over
+   the budget-vote and dairy-price stories), per the §7.1 rule.
+4. `04_science` (truncated=False, 2313 ms) →
+   *A remotely operated submersible illuminates a dense wall of pale pink and orange cold-water
+   coral rising in terraces along an underwater canyon slope at two thousand metres depth.*
+5. `05_flood_long` (**truncated=True**, 3492 ms) →
+   *A low brick house stands on a muddy porch roof with two children inside as a rowboat rescues
+   them from brown floodwater carrying fence posts and plastic barrels under an overcast sky.*
+
+**Template change:** none. All 5 fixtures produced schema- and validator-valid one-line prompts on
+the first attempt, so the §7.1 template ships verbatim and `version` stays `0.1.0`.
+
+**Deviations / decisions**
+- **Model binding `qwen3.5:9b`, not §7.1's `qwen3:8b`.** The §7.1 literal is absent on the box; this
+  is the human-approved T3 rebind (same weight class; see `docs/models.md`), not a template change.
+  Recorded on the transform and here.
+- **`image-prompt` registered in every environment** (unlike dev-gated `echo`). It is a production
+  transform. Verified the one prod-env route test (`echo`→404) still holds.
+
 ## T3 — Ollama client, constrained decoding, concurrency, unload (2026-07-13)
 
 **Shipped**
