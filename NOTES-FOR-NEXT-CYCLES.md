@@ -18,6 +18,26 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
   uncreated on purpose (not even as empty stubs). The `/health` Ollama probe lives in
   `tts/health.py` and is intentionally separate from the future `OllamaClient` (T3).
 
+## From T2 — conventions later cycles must follow
+
+- **Prompt-template convention (T4-T6).** `render_messages` (in `pipeline.py`) renders the
+  transform's `template` (Jinja2), splits on the first `USER:` marker into system/user
+  messages, strips a leading `SYSTEM:`, and replaces the literal token `{common framing}` with
+  the §7 constant. **Write each §7 transform template verbatim in this SYSTEM/USER form** and it
+  drops in unchanged. Templates already use `| tojson` / `| join` / `| default` — all Jinja2
+  built-ins, no filter registration needed.
+- **Validators are top-level-field only (add nested for T5).** `validators.py` factories index
+  `output[field]`. cast-mentions' `no_empty_strings(mentions[].name)` needs array-of-objects
+  path traversal — extend the validator library (or add a path helper) when T5 lands; unit-test
+  the nested case.
+- **T3 wiring seam.** The route returns `503 model_unavailable` while `app.state.llm is None`.
+  T3 sets `app.state.llm = OllamaClient(...)` at startup and maps Ollama-level failures to
+  `503 model_unavailable` inside/around the client. The single-slot `app.state.gen_semaphore`
+  already exists; `queue_wait_s` comes from settings. `FakeLLMClient` supports async callables
+  (used by the sleepy queue-timeout test) — reuse that pattern for any T3 timing tests.
+- **`meta.input_tokens_est`** is the estimate of the *post-truncation* text actually sent (equals
+  the original when not truncated). Keep this if adding fields.
+
 ## Housekeeping
 - `text-transform-service-design.md` (lowercase) is the superseded v1 draft; it sits untracked
   in the repo root. Left as-is (not created by this cycle). Consider removing it once the v2
