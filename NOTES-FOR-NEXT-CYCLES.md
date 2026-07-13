@@ -22,10 +22,9 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
   the §7 constant. **Write each §7 transform template verbatim in this SYSTEM/USER form** and it
   drops in unchanged. Templates already use `| tojson` / `| join` / `| default` — all Jinja2
   built-ins, no filter registration needed.
-- **Validators are top-level-field only (add nested for T5).** `validators.py` factories index
-  `output[field]`. cast-mentions' `no_empty_strings(mentions[].name)` needs array-of-objects
-  path traversal — extend the validator library (or add a path helper) when T5 lands; unit-test
-  the nested case.
+- **Validators are top-level-field only (~~add nested for T5~~ ✅ DONE in T5).** `no_empty_strings`
+  now also handles the `mentions[].name` array-of-objects path; other factories remain top-level
+  (that is all the catalog needs). See the "From T5" section above.
 - **T3 wiring seam.** The route returns `503 model_unavailable` while `app.state.llm is None`.
   T3 sets `app.state.llm = OllamaClient(...)` at startup and maps Ollama-level failures to
   `503 model_unavailable` inside/around the client. The single-slot `app.state.gen_semaphore`
@@ -33,6 +32,27 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
   (used by the sleepy queue-timeout test) — reuse that pattern for any T3 timing tests.
 - **`meta.input_tokens_est`** is the estimate of the *post-truncation* text actually sent (equals
   the original when not truncated). Keep this if adding fields.
+
+## From T5 — for later cycles
+- **Nested-field validators now exist (RESOLVED — was carried from T2/T3).** `no_empty_strings(field)`
+  accepts a one-level array-of-objects path `"<array>[].<sub>"` (e.g. `mentions[].name`) as well as the
+  top-level list form. It is deliberately one level deep — the only shape the catalog needs. If T6+ needs
+  deeper/other nested checks, generalize the same `"[]."` split rather than adding a JSONPath dependency.
+- **`book/` fixture set reused/extended by T6.** `tests/fixtures/book/` holds 4 *Time Machine* (PG #35)
+  excerpts (555–608 w) + `canonicalize_time_traveller.json`. T6's `scene-update` needs **3 _consecutive_**
+  pages — extend this set (the excerpts above are non-consecutive, chosen per-case); commit the new
+  consecutive triple alongside a hand-written `prior_ledger: null` start.
+- **`over_budget="reject"` → 413 works end-to-end** (cast-mentions; also `scene-update` in T6). The 413
+  fires before any LLM call — unit-test it with `fake.calls == []`.
+- **Verbatim templates with >100-char lines:** `cast_canonicalize.py`'s `_TEMPLATE` is built from adjacent
+  string literals split only at the two long lines (no newline at the join → byte-identical render, verified).
+  Reuse this pattern for any T6 template line that trips ruff E501 — it keeps templates verbatim without a
+  lint-config change or a `version` bump.
+- **Real-model quirks seen on cast-mentions (qwen3.5:9b):** occasional empty descriptor `""` (instead of
+  `[]`) and a rare stray non-Latin token mid-descriptor; both schema-valid. GPU tests assert shape only —
+  do NOT tighten to wording. The zero-character-page assertion must stay **loose** (first-person prose
+  surfaces the lone narrator; assert "no invented cast", not `[]`).
+- **No out-of-scope discoveries** surfaced in T5.
 
 ## From T4 — for later cycles
 - **First production transform (`image-prompt`) needed zero new infrastructure** — it is pure
@@ -52,10 +72,8 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
   ignores `format` on `/api/chat`). T4–T6 transforms don't touch this — they just supply an
   `output_schema` and it is enforced. But if `/api/chat` is ever needed (multi-turn), re-verify
   format enforcement first; the seam is `OllamaClient.chat`. See `docs/models.md`.
-- **Nested-field validators are still missing (blocks a T5 assertion).** `validators.py` indexes
-  `output[field]` only. `cast-mentions` needs `no_empty_strings(mentions[].name)` — array-of-
-  objects path traversal. Extend the validator library (or add a path helper) in T5 and unit-test
-  the nested case. (Carried from T2.)
+- **~~Nested-field validators are still missing~~ ✅ RESOLVED in T5.** `no_empty_strings` now handles
+  the `mentions[].name` array-of-objects path (one level deep); unit-tested standalone. See "From T5".
 - **GPU-test pattern (reuse in T4–T6):** `tests/test_gpu.py` builds a real `OllamaClient` from
   `Settings.from_env()`, marks with `pytest.mark.gpu`, and asserts schema/mechanics only. Bind
   test transforms to `qwen3.5:2b` for speed; assert the production binding string separately.

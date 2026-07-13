@@ -10,13 +10,13 @@ Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
 See `text-transform-service-DESIGN.md` for the full design and `text-transform-service-BUILD-PLAN.md`
 for the cycle-by-cycle build plan. Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
 
-> **Status:** Cycle T4 — the first **production transform**, `image-prompt` (Brickfeed's
-> news-story → image-subject-prompt workload), is live on top of the T3 engine: the full
-> pipeline runs against the model with **schema-constrained decoding**, single in-flight
-> generation is serialized (queue → `503 busy` on timeout), and `POST /v1/models/unload`
-> frees VRAM. The remaining production transforms and auth arrive in later cycles (T5+).
-> See [`docs/models.md`](docs/models.md) for the resolved model bindings and two
-> Ollama-behaviour findings that shaped the client.
+> **Status:** Cycle T5 — the two **Scriptorium cast transforms**, `cast-mentions` (per-page
+> character extraction) and `cast-canonicalize` (evidence → paintable canonical description),
+> join `image-prompt` (T4) on top of the T3 engine: the full pipeline runs against the model
+> with **schema-constrained decoding**, single in-flight generation is serialized (queue →
+> `503 busy` on timeout), and `POST /v1/models/unload` frees VRAM. `scene-update` /
+> `illustration-prompt` and auth arrive in later cycles (T6+). See [`docs/models.md`](docs/models.md)
+> for the resolved model bindings and two Ollama-behaviour findings that shaped the client.
 
 ## Requirements
 
@@ -90,6 +90,34 @@ Errors always use `{"error": {"code": "...", "message": "...", "detail": {...}}}
     -H 'content-type: application/json' \
     -d '{"text": "MERIDAN — A magnitude 6.4 earthquake toppled the town clock tower..."}' | jq
   # {"output": {"prompt": "A fallen brick clock tower lies shattered on a cold town square at dawn..."}, "meta": {...}}
+  ```
+
+- **`cast-mentions`** (production; DESIGN §7.2) — Scriptorium P1. Send one book page; get back the
+  characters mentioned on it with **verbatim** physical descriptors
+  (`{"mentions": [{"name", "aliases", "descriptors", "is_person"}, …]}`). Called once per page,
+  parallel-safe; the caller reduces mentions across pages. Budget is **`reject`**: a page over the
+  1600 est-token budget returns `413 over_budget` (a paginator bug — fail loudly, never truncate).
+  Bound to `qwen3.5:9b`. `options` is `{}`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/cast-mentions \
+    -H 'content-type: application/json' \
+    -d '{"text": "The Time Traveller stood before us, his face ghastly pale..."}' | jq
+  # {"output": {"mentions": [{"name": "the Time Traveller", "descriptors": ["his face ghastly pale"], ...}]}, "meta": {...}}
+  ```
+
+- **`cast-canonicalize`** (production; DESIGN §7.3) — Scriptorium P2. Called once per major
+  character. The evidence rides in `options` (`{"name", "descriptors", "aliases"?, "era"?, "genre"?}`);
+  `text` is empty. Returns one paintable canonical entry
+  (`{"visual_description", "one_line", "tags"}`) — using only the evidence, choosing plain
+  era-appropriate defaults where it is silent. Bound to `qwen3.5:9b`. Missing a required option →
+  `400 bad_options`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/cast-canonicalize \
+    -H 'content-type: application/json' \
+    -d '{"text": "", "options": {"name": "the Time Traveller", "descriptors": ["his face was ghastly pale", "he walked with a limp"]}}' | jq
+  # {"output": {"one_line": "A limping, pale Victorian gentleman...", "visual_description": "...", "tags": [...]}, "meta": {...}}
   ```
 
 - **`echo`** — a **dev-only** transform (registered only when `TTS_ENV=dev`) that proves the
