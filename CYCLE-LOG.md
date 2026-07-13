@@ -1,5 +1,88 @@
 # Cycle Log
 
+## T5 — `cast-mentions` + `cast-canonicalize` (2026-07-13)
+
+**Shipped**
+- `transforms/cast_mentions.py` — `build_cast_mentions()`, verbatim DESIGN §7.2: mentions-array
+  output_schema (per-item `name`/`aliases`/`descriptors`/`is_person`, `maxItems:15`), the
+  SYSTEM/USER template, budget **1600 est-tokens with `over_budget="reject"`** (a page over budget
+  is a paginator bug → 413, never truncate), temp 0.2, num_predict 700, `options_schema={}`,
+  validator `no_empty_strings("mentions[].name")`.
+- `transforms/cast_canonicalize.py` — `build_cast_canonicalize()`, verbatim DESIGN §7.3: the §7.3
+  `options_schema` (`required:[name,descriptors]`), output_schema (`visual_description` 80–700,
+  `one_line` 15–160, `tags` ≤8), the SYSTEM/USER template (reads `options.*` via Jinja), budget 1200
+  `truncate`/`head`, temp 0.5, num_predict 400, validator
+  `banned_substrings("visual_description", ["**","\n\n","personality","brave","kind"])`.
+- `validators.py` — **nested-field extension**: `no_empty_strings(field)` now accepts a one-level
+  array-of-objects path `"<array>[].<sub>"` (e.g. `mentions[].name`) in addition to the top-level
+  list form. Catches a whitespace-only `name` that slips past the schema's `minLength:1`. Top-level
+  behavior unchanged. (Resolves the T2/T3 carried-forward blocker.)
+- `transforms/__init__.py` — both cast transforms registered **unconditionally** alongside
+  `image-prompt` (production; `echo` stays dev-gated).
+- `tests/fixtures/book/` — 4 excerpts from *The Time Machine* (Project Gutenberg #35, public domain;
+  PG boilerplate stripped, full book not committed), each 555–608 words covering the four §-cases:
+  `01_dialogue` (multi-character dialogue + physical descriptors), `02_description` (pure
+  time-travel description, zero named characters), `03_introduction` (first Eloi introduction),
+  `04_pronouns` (established character carried by pronouns/epithets only). Plus
+  `canonicalize_time_traveller.json` — hand-assembled options payload with 8 verbatim descriptors
+  drawn from `01_dialogue`.
+- Tests: `test_validators.py` (nested-path standalone); `test_cast_mentions.py` (FakeLLM —
+  binding/shape, over-budget → 413 **without calling the LLM**, nested validator catches a
+  whitespace name → 422, happy path, empty-mentions valid); `test_cast_canonicalize.py` (FakeLLM —
+  binding/shape, missing `descriptors` → 400 `bad_options`, banned personality-word → 422, happy
+  path); `test_gpu.py` — all 4 excerpts through cast-mentions on **qwen3.5:9b** (loose zero-character
+  check, mentions printed) and the canonicalize payload (≤160-char `one_line`, 2–4 sentence
+  `visual_description`, printed).
+
+**Verification**
+- `make lint` clean; `make test` → **91 passed** (81 prior + 10 new), 6 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama 0.30.7, qwen3.5:9b) → **6 passed** in ~57s (4 prior + 2 new).
+- Live route (`TTS_ENV=prod`): `/health` ok; `POST /v1/transform/cast-mentions` on `04_pronouns` →
+  200 schema-valid, `attempts:1`; a ~1300-word body → **HTTP 413** `over_budget`
+  (`input_tokens_est:1756`, `budget:1600`) via the §4 error envelope; `POST /v1/transform/
+  cast-canonicalize` with the Time-Traveller payload → 200 paintable entry.
+
+**GPU outputs — human eyeball (qwen3.5:9b, `attempts:1` on every call)**
+
+_cast-mentions_ (cold first call 10998 ms; warm 1507–7042 ms):
+- `01_dialogue` → 6 person mentions: the Time Traveller, the Editor, the Doctor, the Journalist,
+  the Psychologist, the Medical Man. Time Traveller descriptors are verbatim quotes
+  ("His coat was dusty and dirty, and smeared with green down the sleeves; his hair disordered…").
+- `02_description` (pure description) → **1** mention: the Time Traveller (the lone first-person
+  narrator) — correctly invented **no cast**; descriptor "helpless headlong motion".
+- `03_introduction` → 2 mentions ("I" is_person:true, descriptor "fragile thing out of futurity";
+  "He" is_person:false — the fragile Eloi).
+- `04_pronouns` → 3 mentions: the Time Traveller (epithet, correctly picked up), "I", the
+  man-servant — the established-character-via-epithet case works.
+
+_cast-canonicalize_ ("the Time Traveller", 7312 ms) → paintable, 3 sentences, drawn from the evidence:
+- one_line: *Old scientist in dirty green-smeared coat with pale face, grey hair, cut chin, and
+  limping walk.*
+- visual_description: *An elderly man with disordered, greyer hair stands wearing a dusty and dirty
+  coat smeared with green down the sleeves. His face is ghastly pale, marked by a brown cut on his
+  chin that remains half-healed, while an intense suffering draws him into a haggard expression where
+  only the ghost of an old smile flickers across his features. He walks with a limp resembling those
+  of footsore tramps and wears tattered, blood-stained socks.*
+- tags: *['grey beard', 'dusty coat', 'blood-stained socks', 'ghastly pale face', 'half-healed cut']*
+
+**Template change:** none. Both transforms produced schema- and validator-valid output on the first
+attempt across all fixtures, so the §7.2/§7.3 templates ship verbatim and both `version` stay `0.1.0`.
+
+**Observed model quirks (no action — schema/validators only assert shape):** the model occasionally
+emits an empty descriptor string (`""`) instead of `[]` and once truncated a descriptor with a stray
+non-Latin token; both are schema-valid and the §7.2 validator only guards `name`. Noted for the
+downstream caller's reduction step, not this service.
+
+**Deviations / decisions**
+- **Model binding `qwen3.5:9b`, not §7.2/§7.3's `qwen3:8b`.** The literal tag is absent; this is the
+  human-approved T3 rebind (same weight class; `docs/models.md`), not a template change.
+- **Both cast transforms registered in every environment** (production, like `image-prompt`).
+- **§7.3 template kept byte-verbatim despite two lines >100 chars.** Two of §7.3's Jinja control-flow
+  lines exceed the ruff 100-char limit. Rather than reflow the prompt (which would be a template
+  change), the template literal is split at those two points into adjacent string literals — **no
+  newline introduced at the join**, so the rendered string is byte-identical (verified). Matches
+  `pipeline.py`'s `COMMON_FRAMING` style; no ruff-config change needed.
+
 ## T4 — `image-prompt` transform (2026-07-13)
 
 **Shipped**
