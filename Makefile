@@ -1,8 +1,9 @@
 .PHONY: dev test test-gpu lint sync
 
 # Run the service with auto-reload (DESIGN §9: default bind 0.0.0.0:8712).
+# TTS_ENV=dev enables the dev-only `echo` transform.
 dev:
-	uv run uvicorn tts.app:app --reload --host $${TTS_HOST:-0.0.0.0} --port $${TTS_PORT:-8712}
+	TTS_ENV=$${TTS_ENV:-dev} uv run uvicorn tts.app:app --reload --host $${TTS_HOST:-0.0.0.0} --port $${TTS_PORT:-8712}
 
 # Non-GPU test suite — runs anywhere (Ollama mocked with respx).
 test:

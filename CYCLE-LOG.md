@@ -1,5 +1,54 @@
 # Cycle Log
 
+## T2 — Registry, pipeline, FakeLLM, `echo` transform (2026-07-13)
+
+**Shipped**
+- `registry.py` — `Transform` frozen dataclass field-for-field per DESIGN §6; `Validator`
+  type; `REGISTRY` + `register()` raising `ValueError` on duplicate names (startup error).
+- `llm.py` — `LLMClient` protocol (`async chat(messages, format_schema, params) -> str`) and
+  `FakeLLMClient` (list-or-callable responses, records every call incl. params/schema). No
+  `OllamaClient` (T3).
+- `budget.py` — `estimate_tokens` = `ceil(words × 1.35)`; `lede_first_n`/`head` truncation on
+  blank-line paragraph boundaries, both `(text, truncated)`; single-paragraph input untouched.
+- `validators.py` — `max_chars`, `min_chars`, `banned_substrings`, `no_empty_strings`,
+  `word_range` (top-level fields; nested paths deferred to T5).
+- `pipeline.py` — full §3 pipeline: options→schema (400 `bad_options`), budget (413
+  `over_budget` / truncate+`meta.truncated`), `render_messages` (SYSTEM/USER split +
+  `{common framing}`), semaphore-serialized generation (503 `busy` on queue timeout),
+  parse+schema+validators with retry & temp-bump (422 `validation_failed`,
+  `detail.reasons` len = retries+1), full `meta` block. `TransformError` → §4 taxonomy.
+- `config.py` — added `TTS_ENV` / `is_dev` (echo dev gate).
+- `transforms/echo.py` + `transforms/__init__.py::register_all(settings)` — dev-only `echo`
+  (bound to `qwen3:0.6b`, never called under FakeLLM), registered only when `TTS_ENV=dev`.
+- `app.py` — `POST /v1/transform/{name}` wired to the pipeline with a `get_llm_client`
+  dependency (FakeLLM via override in tests; `app.state.llm=None` in T2 → 503
+  `model_unavailable` live); `RequestValidationError` → 400 `bad_request`; unexpected → 500
+  `internal`; single-slot `gen_semaphore` on app state.
+- Tests: registry (defaults/frozen/duplicate), budget (estimate + both strategies +
+  no-blank-lines), validators (each), pipeline (bad_options/over_budget-reject/truncate/
+  retry-temp-bump/always-invalid-422/validator-retry/503-busy×2/full-meta/render_messages),
+  route (404/200+meta/omitted-options/400/500/dev-gate). Makefile `dev` sets `TTS_ENV=dev`;
+  README documents the transform endpoint, error taxonomy, and `TTS_ENV`.
+
+**Verification**
+- `make lint` clean; `make test` → 55 passed. Every §4 code (400 bad_request, 400
+  bad_options, 404, 413, 422, 503 busy, 500) has a test; 503 busy proven via a pre-acquired
+  semaphore *and* a concurrent sleepy-FakeLLM race.
+- Live boot (`TTS_ENV=dev`): `/health` ok; `POST /v1/transform/echo` → 503 `model_unavailable`
+  (no backend until T3); unknown name → 404.
+
+**Deviations / decisions**
+- **`template` → messages convention.** §6's dataclass has only `template: str` and every §7
+  template is written `SYSTEM: {common framing} … USER: …`. `render_messages` renders the
+  Jinja2, splits on the first `USER:` marker, strips `SYSTEM:`, and substitutes
+  `{common framing}` with the §7 constant — so T4-T6 templates drop in verbatim.
+- **`TTS_ENV`** added (not in §9's table) purely to gate the dev-only `echo`; documented.
+- **`register_all(settings)`** performs the explicit-list registration at startup (refines
+  §6's import-side-effect) to enable the env gate + test isolation.
+- **Validators are top-level-field**; nested-array paths (`mentions[].name`) land in T5.
+- **No `OllamaClient`; `app.state.llm=None`** — real generation + `model_unavailable`/real
+  `busy` wiring is T3. (Models still absent on the box; unchanged blocker for T3+.)
+
 ## T1 — Scaffold, ADRs, /health (2026-07-13)
 
 **Shipped**

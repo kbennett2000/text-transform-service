@@ -29,11 +29,19 @@ class Settings:
     transform_api_key: str | None = None
     queue_wait_s: int = 90
     log_level: str = "INFO"
+    # Deployment environment. "dev" enables dev-only transforms (e.g. echo). Not part
+    # of the DESIGN §9 table; introduced in T2 for the echo dev gate.
+    env: str = "prod"
 
     @property
     def auth_enabled(self) -> bool:
         """Auth is on iff an API key is configured (ADR-0003)."""
         return self.transform_api_key is not None
+
+    @property
+    def is_dev(self) -> bool:
+        """True when running in the dev environment (gates dev-only transforms)."""
+        return self.env == "dev"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -49,6 +57,7 @@ class Settings:
             transform_api_key=key,
             queue_wait_s=_int_env("QUEUE_WAIT_S", 90),
             log_level=os.getenv("TTS_LOG_LEVEL", "INFO"),
+            env=os.getenv("TTS_ENV", "prod"),
         )
 
 
