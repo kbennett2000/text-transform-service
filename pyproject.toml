@@ -1,0 +1,43 @@
+[project]
+name = "tts"
+version = "0.1.0"
+description = "LAN-only, credential-free local-LLM text-transform service (text -> transform -> JSON)"
+readme = "README.md"
+authors = [
+    { name = "Kris Bennett", email = "kbennett2000@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+    "pydantic>=2",
+    "jsonschema>=4.20",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.17,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: tests that require a live Ollama + GPU (run only on the 5070; excluded by default via `-m 'not gpu'`)",
+]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
