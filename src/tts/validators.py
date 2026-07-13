@@ -4,9 +4,9 @@ Each factory returns a :data:`~tts.registry.Validator`: a callable taking the pa
 output object and returning ``None`` when acceptable, or a reason string when not.
 Validators run *after* JSON-schema validation and never mutate the output.
 
-Field access is top-level (``output[field]``). Nested-array paths such as
-``mentions[].name`` are not needed until cast-mentions (T5); see
-NOTES-FOR-NEXT-CYCLES.md.
+Field access is top-level (``output[field]``), except :func:`no_empty_strings`, which
+also accepts a one-level array-of-objects path (``mentions[].name``) for cast-mentions
+(T5, DESIGN §7.2).
 """
 
 from __future__ import annotations
@@ -56,7 +56,29 @@ def banned_substrings(field: str, substrings: Sequence[str]) -> Validator:
 
 
 def no_empty_strings(field: str) -> Validator:
-    """Fail if ``output[field]`` (a list of strings) contains an empty/blank string."""
+    """Fail if a string field contains an empty/blank ("" or whitespace-only) value.
+
+    ``field`` is either a **top-level list field** (``"descriptors"`` -> checks each string
+    in ``output["descriptors"]``) or a **one-level array-of-objects path**
+    (``"mentions[].name"`` -> checks ``item["name"]`` for each object in
+    ``output["mentions"]``). The nested form is what ``cast-mentions`` needs (DESIGN §7.2):
+    it catches a whitespace-only ``name`` that slips past the schema's ``minLength: 1``.
+    Only one ``[].`` level is supported — exactly the catalog's need, nothing more.
+    """
+    if "[]." in field:
+        array_field, sub = field.split("[].", 1)
+
+        def _check(output: dict) -> str | None:
+            items = output.get(array_field)
+            if isinstance(items, list):
+                for i, item in enumerate(items):
+                    if isinstance(item, dict):
+                        value = item.get(sub)
+                        if isinstance(value, str) and value.strip() == "":
+                            return f"{array_field}[{i}].{sub}: empty string"
+            return None
+
+        return _check
 
     def _check(output: dict) -> str | None:
         value = output.get(field)
