@@ -103,3 +103,51 @@ def test_echo_not_registered_when_not_dev(monkeypatch):
     client = _client_with_llm(FakeLLMClient(['{"echo": "x"}']))
     resp = client.post("/v1/transform/echo", json={"text": "hi"})
     assert resp.status_code == 404
+
+
+# ---- POST /v1/models/unload ------------------------------------------------------
+
+class _StubLLM:
+    """Stand-in for OllamaClient's unload surface (list_loaded / unload)."""
+
+    def __init__(self, loaded):
+        self._loaded = list(loaded)
+        self.unloaded: list[str] = []
+
+    async def list_loaded(self):
+        return list(self._loaded)
+
+    async def unload(self, model):
+        self.unloaded.append(model)
+        if model in self._loaded:
+            self._loaded.remove(model)
+
+
+def test_unload_specific_model():
+    stub = _StubLLM(["qwen3.5:9b", "qwen3.5:2b"])
+    client = _client_with_llm(stub)
+    resp = client.post("/v1/models/unload", json={"model": "qwen3.5:9b"})
+    assert resp.status_code == 200
+    assert resp.json()["unloaded"] == ["qwen3.5:9b"]
+    assert stub.unloaded == ["qwen3.5:9b"]
+
+
+def test_unload_all_when_model_omitted():
+    stub = _StubLLM(["qwen3.5:9b", "qwen3.5:2b"])
+    client = _client_with_llm(stub)
+    resp = client.post("/v1/models/unload", json={})
+    assert resp.status_code == 200
+    assert set(resp.json()["unloaded"]) == {"qwen3.5:9b", "qwen3.5:2b"}
+
+
+def test_unload_backend_error_is_503():
+    from tts.llm import LLMBackendError
+
+    class _Down(_StubLLM):
+        async def list_loaded(self):
+            raise LLMBackendError("unreachable")
+
+    client = _client_with_llm(_Down([]))
+    resp = client.post("/v1/models/unload", json={"model": "qwen3.5:9b"})
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "model_unavailable"

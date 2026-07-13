@@ -20,6 +20,7 @@ import jsonschema
 from jinja2 import Environment
 
 from tts.budget import STRATEGIES, estimate_tokens
+from tts.llm import LLMBackendError
 from tts.registry import Transform
 
 # Prepended to every transform's system message (DESIGN §7, verbatim).
@@ -175,12 +176,23 @@ async def run_transform(
             attempts = attempt + 1
             temperature = transform.temperature + transform.temp_bump * attempt
             params = {
+                "model": transform.model,
                 "temperature": temperature,
                 "top_p": transform.top_p,
                 "num_predict": transform.num_predict,
                 "think": transform.think,
             }
-            raw = await llm.chat(messages, transform.output_schema, params)
+            try:
+                raw = await llm.chat(messages, transform.output_schema, params)
+            except LLMBackendError as exc:
+                # Infrastructure failure (Ollama down / errored), not a validation failure:
+                # fail fast, do not retry. The semaphore is released by the finally below.
+                raise TransformError(
+                    503,
+                    "model_unavailable",
+                    "generation backend unavailable",
+                    exc.detail or None,
+                ) from exc
             output, reason = _attempt_reason(transform, raw)
             if output is not None:
                 break

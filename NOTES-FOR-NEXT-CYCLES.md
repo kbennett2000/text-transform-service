@@ -2,16 +2,12 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
-## BLOCKER for T3+ — bound models are not installed
-- `qwen3:8b` and `qwen3:0.6b` (DESIGN §2 bindings) are **absent** on the box. Box has
-  `qwen3.5:2b/4b/9b`, `lfm2.5:8b`, `llama3.1:8b`. See `docs/models.md` for the full record and
-  the human action required. **No substitution was made** (DESIGN §0.1). T2 (FakeLLM only) is
-  unaffected; T3 (real Ollama generation) and T4+ cannot land until models are resolved.
-
-## T3 — verify the Qwen3 "disable thinking" field name
-- DESIGN §2 says to disable Qwen3 thinking (`think: false`, older workaround `/no_think`).
-  Verify the exact field name against the installed Ollama version (0.30.7) and record in
-  `docs/models.md`. Unverified in T1 (no generation code, models absent).
+## ✅ RESOLVED in T3 — model blocker + think field
+- The absent `qwen3:8b`/`qwen3:0.6b` were **rebound** to `qwen3.5:9b` (default) / `qwen3.5:2b`
+  (test/echo) — same weight classes, human-approved. **Production transforms T4–T6 must bind
+  `qwen3.5:9b`** (not the DESIGN §2 `qwen3:8b` string). Full record in `docs/models.md`.
+- Thinking is disabled via the **top-level `think: false`** request field (verified live on
+  Ollama 0.30.7). No `/no_think` tag needed. Transforms set `think=False` (the dataclass default).
 
 ## T2/T3 — modules deliberately NOT created in T1
 - `llm.py`, `registry.py`, `pipeline.py`, `budget.py` are later-cycle scope and were left
@@ -37,6 +33,21 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
   (used by the sleepy queue-timeout test) — reuse that pattern for any T3 timing tests.
 - **`meta.input_tokens_est`** is the estimate of the *post-truncation* text actually sent (equals
   the original when not truncated). Keep this if adding fields.
+
+## From T3 — for later cycles
+- **Constrained decoding runs through `/api/generate`, not `/api/chat`** (this Ollama silently
+  ignores `format` on `/api/chat`). T4–T6 transforms don't touch this — they just supply an
+  `output_schema` and it is enforced. But if `/api/chat` is ever needed (multi-turn), re-verify
+  format enforcement first; the seam is `OllamaClient.chat`. See `docs/models.md`.
+- **Nested-field validators are still missing (blocks a T5 assertion).** `validators.py` indexes
+  `output[field]` only. `cast-mentions` needs `no_empty_strings(mentions[].name)` — array-of-
+  objects path traversal. Extend the validator library (or add a path helper) in T5 and unit-test
+  the nested case. (Carried from T2.)
+- **GPU-test pattern (reuse in T4–T6):** `tests/test_gpu.py` builds a real `OllamaClient` from
+  `Settings.from_env()`, marks with `pytest.mark.gpu`, and asserts schema/mechanics only. Bind
+  test transforms to `qwen3.5:2b` for speed; assert the production binding string separately.
+- **`meta.warnings` soft-validator mechanism (T6)** is not built yet — the pipeline currently
+  treats any validator reason as a hard failure (retry→422). T6 adds `warn:<reason>` handling.
 
 ## Housekeeping
 - `text-transform-service-design.md` (lowercase) is the superseded v1 draft; it sits untracked

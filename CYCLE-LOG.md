@@ -1,5 +1,65 @@
 # Cycle Log
 
+## T3 — Ollama client, constrained decoding, concurrency, unload (2026-07-13)
+
+**Shipped**
+- `llm.py` — `OllamaClient` implementing `LLMClient` + `LLMBackendError`. `chat` does
+  `POST /api/generate` (`stream:false`, `format`=output_schema when non-empty, top-level
+  `think`/`keep_alive`, `options:{temperature,top_p,num_predict}`), returns the raw
+  `response` text; 120s timeout. Helpers `list_tags` (`/api/tags`), `list_loaded`
+  (`/api/ps`), `unload` (`/api/generate` `keep_alive:0`). httpx/parse failures → `LLMBackendError`.
+- `pipeline.py` — the per-request `params` now carries `"model": transform.model` (the
+  protocol's `chat` has no model arg; one shared client serves every binding). The `chat`
+  call is wrapped: `LLMBackendError` → `TransformError(503, model_unavailable)`, **not
+  retried** (infra failure ≠ validation failure); the semaphore `finally` still releases.
+- `startup.py` — `warn_missing_models`: diffs registry-bound models against `/api/tags`,
+  logs a loud warning for any missing; never raises (Ollama-down is itself just a warning).
+- `app.py` — `app.state.llm` is now a real `OllamaClient` (constructor opens no sockets); a
+  `lifespan` runs the startup model check (fires only under the ASGI lifespan protocol, so
+  bare-`TestClient` unit tests make no network calls). Added `POST /v1/models/unload`
+  (`{"model"}` or `{}`→all loaded; unload each, then **bounded-poll** `/api/ps` to confirm;
+  returns `{"unloaded":[…]}`; backend failure → 503 `model_unavailable`). Auth-exempt (T7).
+- `transforms/echo.py` — rebound `qwen3:0.6b` → `qwen3.5:2b`.
+- Tests: `test_ollama_client.py` (respx: generate body shape — model/think/format top-level,
+  sampling under `options`, `stream:false`; empty schema omits `format`; http/conn/parse
+  errors → `LLMBackendError`; tags/ps parse; unload posts `keep_alive:0`), `test_startup_check.py`
+  (missing→warn, present→quiet, empty registry noop, unreachable→warn-not-raise), pipeline
+  (second concurrent request `queued_ms>0`; `LLMBackendError`→503 not retried; params carry
+  model), route (unload one/all/backend-error-503). `test_gpu.py` (echo schema-valid on
+  `qwen3.5:2b`; constrained decoding forces schema from a non-JSON prompt; unload empties
+  `/api/ps`). README documents unload + constrained decoding + bindings; models.md resolved.
+
+**Verification**
+- `make lint` clean; `make test` → **75 passed** (55 prior + 20 new), 3 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama 0.30.7 up) → **3 passed** in ~6.3s.
+- Live boot (`TTS_ENV=dev`): `/health` ok; `POST /v1/transform/echo` → 200 schema-valid
+  `{"echo": …}` from `qwen3.5:2b`, `latency_ms` ~3.9–4.1s (cold load), `attempts:1`; unknown
+  → 404; malformed body → 400. `POST /v1/models/unload {}` → `{"unloaded":["qwen3.5:2b"]}`
+  and `/api/ps` empty afterward.
+
+**Task 0 — model rebind + think verification (human decision already made)**
+- Rebound the absent `qwen3:8b`/`qwen3:0.6b` → **`qwen3.5:9b`** (default) / **`qwen3.5:2b`**
+  (test/echo), same weight classes in the installed family, no pulls. Recorded in
+  `docs/models.md`.
+- **Think disable VERIFIED live:** the top-level `think: false` request field suppresses the
+  `thinking` output on `qwen3.5` (Ollama 0.30.7); `think: true` brings it back (confirmed
+  contrast). `/no_think` prompt tag unnecessary.
+
+**Deviations / decisions**
+- **`/api/generate`, not `/api/chat` (DESIGN §5).** Verified empirically & deterministically
+  that on this Ollama (0.30.7) `POST /api/chat` **silently ignores `format`** (no constrained
+  decoding — prose returned for a non-JSON prompt), while `POST /api/generate` **enforces**
+  the schema grammar. To keep ADR-0002 / §1 ("format drift structurally impossible") true, the
+  client uses `/api/generate`; rendered `[{system},{user}]` map to `system`+`prompt`. **Human-
+  approved** during the cycle. Full record in `docs/models.md`. `/health` still uses `/api/ps`
+  + `/api/tags`.
+- **Model rebind** deviates from DESIGN §2 tags (see Task 0 / `docs/models.md`).
+- **`model` added to the pipeline `params` dict** so the shared client can target each
+  transform's tag through the fixed 3-arg `chat` signature (non-breaking: T2 tests assert
+  `params["temperature"]` by key).
+- **Unload confirmation bounded-polls `/api/ps`** because Ollama doesn't drop a model the
+  instant `keep_alive:0` returns; a single read under-reported. Poll ≤ ~1.8s.
+
 ## T2 — Registry, pipeline, FakeLLM, `echo` transform (2026-07-13)
 
 **Shipped**
