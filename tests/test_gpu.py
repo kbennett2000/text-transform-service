@@ -3,14 +3,16 @@
     make test-gpu        # uv run pytest -m gpu
 
 These hit real Ollama and assert **schema conformance and pipeline mechanics only** — never
-model wording (qwen3.5:2b quality is irrelevant here; it only proves the plumbing). The test
-model is `qwen3.5:2b` (rebound from the absent `qwen3:0.6b`; see docs/models.md).
+model wording (model quality is irrelevant here; these only prove the plumbing). The fast
+plumbing model is `qwen3.5:2b` (rebound from the absent `qwen3:0.6b`); production-transform
+GPU tests (T4+) run on the real binding `qwen3.5:9b`. See docs/models.md.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -18,10 +20,13 @@ from tts.config import Settings
 from tts.llm import OllamaClient
 from tts.pipeline import run_transform
 from tts.transforms.echo import build_echo
+from tts.transforms.image_prompt import build_image_prompt
 
 pytestmark = pytest.mark.gpu
 
 TEST_MODEL = "qwen3.5:2b"
+
+_NEWS_FIXTURES = Path(__file__).parent / "fixtures" / "news"
 
 
 @pytest.fixture
@@ -88,3 +93,52 @@ async def test_unload_empties_ps(client):
     await asyncio.sleep(0.5)
     loaded_after = await client.list_loaded()
     assert all(TEST_MODEL not in m for m in loaded_after), f"still loaded: {loaded_after}"
+
+
+# --- T4: image-prompt on the real production model (qwen3.5:9b) ---------------------------
+
+IMAGE_PROMPT_MODEL = "qwen3.5:9b"
+
+
+async def test_image_prompt_all_fixtures_schema_valid_and_printed(client, capsys):
+    """Run all 5 synthetic news fixtures through the real image-prompt transform on
+    qwen3.5:9b. The pipeline enforces the §7.1 output_schema *and* the transform's own
+    validators (banned_substrings + word_range) — so a returned result (no TransformError,
+    no 422) IS the schema+validator assertion. We never assert wording; the prompts are
+    printed for the human eyeball paste into CYCLE-LOG. First fixture is a cold load; the
+    rest are warm (latencies noted separately).
+    """
+    transform = build_image_prompt()
+    assert transform.model == IMAGE_PROMPT_MODEL
+
+    fixtures = sorted(_NEWS_FIXTURES.glob("*.txt"))
+    assert len(fixtures) == 5, f"expected 5 fixtures, found {[f.name for f in fixtures]}"
+
+    lines: list[str] = []
+    for i, path in enumerate(fixtures):
+        text = path.read_text(encoding="utf-8")
+        result = await run_transform(
+            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+        )
+        output, meta = result["output"], result["meta"]
+
+        # Shape/mechanics only — schema + validators already passed inside the pipeline.
+        assert set(output) == {"prompt"}
+        assert isinstance(output["prompt"], str) and output["prompt"].strip()
+        assert meta["model"] == IMAGE_PROMPT_MODEL
+
+        if path.name == "05_flood_long.txt":
+            assert meta["truncated"] is True  # >3000 est-tokens -> lede_first_n truncation
+
+        tag = "cold" if i == 0 else "warm"
+        lines.append(
+            f"[{path.name}] truncated={meta['truncated']} "
+            f"latency_ms={meta['latency_ms']} ({tag}) attempts={meta['attempts']}\n"
+            f"  -> {output['prompt']}"
+        )
+
+    with capsys.disabled():
+        print("\n\n=== T4 image-prompt GPU outputs (qwen3.5:9b) ===")
+        for line in lines:
+            print(line)
+        print("=== end image-prompt outputs ===\n")
