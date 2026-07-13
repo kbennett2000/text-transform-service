@@ -36,6 +36,22 @@ def test_no_empty_strings():
     assert "empty string" in v({"descriptors": ["ok", "  "]})
 
 
+def test_no_empty_strings_nested_path():
+    # The T5 extension: an "<array>[].<sub>" path checks each object's sub-field. This is
+    # cast-mentions' no_empty_strings("mentions[].name") — it catches a whitespace-only
+    # name that slips past the schema's minLength:1.
+    v = no_empty_strings("mentions[].name")
+    clean = {"mentions": [{"name": "Weena"}, {"name": "the Time Traveller"}]}
+    assert v(clean) is None
+    reason = v({"mentions": [{"name": "Weena"}, {"name": " "}]})
+    assert reason is not None
+    assert "mentions[1].name" in reason and "empty string" in reason
+    # Absent/wrong-type array or missing sub-field is not this validator's job to flag.
+    assert v({"mentions": "not-a-list"}) is None
+    assert v({"mentions": [{"aliases": []}]}) is None
+    assert v({}) is None
+
+
 def test_word_range():
     v = word_range("prompt", 2, 4)
     assert v({"prompt": "two words"}) is None

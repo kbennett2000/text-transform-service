@@ -19,6 +19,8 @@ import pytest
 from tts.config import Settings
 from tts.llm import OllamaClient
 from tts.pipeline import run_transform
+from tts.transforms.cast_canonicalize import build_cast_canonicalize
+from tts.transforms.cast_mentions import build_cast_mentions
 from tts.transforms.echo import build_echo
 from tts.transforms.image_prompt import build_image_prompt
 
@@ -27,6 +29,7 @@ pytestmark = pytest.mark.gpu
 TEST_MODEL = "qwen3.5:2b"
 
 _NEWS_FIXTURES = Path(__file__).parent / "fixtures" / "news"
+_BOOK_FIXTURES = Path(__file__).parent / "fixtures" / "book"
 
 
 @pytest.fixture
@@ -142,3 +145,99 @@ async def test_image_prompt_all_fixtures_schema_valid_and_printed(client, capsys
         for line in lines:
             print(line)
         print("=== end image-prompt outputs ===\n")
+
+
+# --- T5: cast-mentions + cast-canonicalize on the real production model (qwen3.5:9b) -------
+
+CAST_MODEL = "qwen3.5:9b"
+
+
+async def test_cast_mentions_all_book_fixtures_schema_valid_and_printed(client, capsys):
+    """Run all 4 Time Machine excerpts through the real cast-mentions transform on
+    qwen3.5:9b. The pipeline enforces the §7.2 mentions schema and the nested
+    no_empty_strings validator, so a returned result IS the schema+validator assertion.
+    We assert shape/mechanics + a loose check on the zero-character page, and print the
+    mentions for the human eyeball (descriptors must be verbatim-ish quotes, not inventions).
+    """
+    transform = build_cast_mentions()
+    assert transform.model == CAST_MODEL
+
+    fixtures = sorted(_BOOK_FIXTURES.glob("*.txt"))
+    assert len(fixtures) == 4, f"expected 4 excerpts, found {[f.name for f in fixtures]}"
+
+    lines: list[str] = []
+    for i, path in enumerate(fixtures):
+        text = path.read_text(encoding="utf-8")
+        result = await run_transform(
+            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+        )
+        output, meta = result["output"], result["meta"]
+
+        # Shape/mechanics only — schema + validators already passed inside the pipeline.
+        assert set(output) == {"mentions"}
+        assert isinstance(output["mentions"], list)
+        assert meta["model"] == CAST_MODEL
+
+        if path.name == "02_description.txt":
+            # Zero-character page (pure time-travel description). DESIGN calls for a LOOSE
+            # assertion here, logging the actual result: this excerpt is first-person
+            # narration, so the model may reasonably surface the lone narrator ("I", i.e.
+            # the Time Traveller) — what it must NOT do is invent a populated cast. We
+            # assert it stays empty / non-person, or at most the single narrator.
+            mentions = output["mentions"]
+            assert (
+                mentions == []
+                or all(not m["is_person"] for m in mentions)
+                or len(mentions) <= 1
+            ), f"pure-description page invented a cast: {mentions}"
+
+        tag = "cold" if i == 0 else "warm"
+        names = [f"{m['name']} (person={m['is_person']})" for m in output["mentions"]]
+        lines.append(
+            f"[{path.name}] latency_ms={meta['latency_ms']} ({tag}) "
+            f"attempts={meta['attempts']} mentions={len(output['mentions'])}\n"
+            f"  names: {names}\n"
+            f"  full: {json.dumps(output['mentions'], ensure_ascii=False)}"
+        )
+
+    with capsys.disabled():
+        print("\n\n=== T5 cast-mentions GPU outputs (qwen3.5:9b) ===")
+        for line in lines:
+            print(line)
+        print("=== end cast-mentions outputs ===\n")
+
+
+async def test_cast_canonicalize_fixture_schema_valid_and_printed(client, capsys):
+    """Run the hand-assembled 'the Time Traveller' evidence payload through the real
+    cast-canonicalize transform on qwen3.5:9b. Assert the §7.3 output bounds plus a
+    tolerant sentence-count check; print the canonical entry for the human eyeball
+    (paintable + era-plausible; drawn from the evidence).
+    """
+    transform = build_cast_canonicalize()
+    assert transform.model == CAST_MODEL
+
+    options = json.loads(
+        (_BOOK_FIXTURES / "canonicalize_time_traveller.json").read_text(encoding="utf-8")
+    )
+    result = await run_transform(
+        transform, "", options, client, asyncio.Semaphore(1), 120.0
+    )
+    output, meta = result["output"], result["meta"]
+
+    assert set(output) == {"visual_description", "one_line", "tags"}
+    assert meta["model"] == CAST_MODEL
+    assert len(output["one_line"]) <= 160
+    # Tolerant sentence count: split on ". " and drop empties. Expect 2-4 sentences.
+    prose = output["visual_description"].replace("\n", " ")
+    sentences = [s for s in prose.split(". ") if s.strip()]
+    assert 2 <= len(sentences) <= 4, (
+        f"expected 2-4 sentences, got {len(sentences)}: {output['visual_description']!r}"
+    )
+
+    with capsys.disabled():
+        print("\n\n=== T5 cast-canonicalize GPU output (qwen3.5:9b) ===")
+        print(f"latency_ms={meta['latency_ms']} attempts={meta['attempts']}")
+        print(f"one_line: {output['one_line']}")
+        print(f"visual_description: {output['visual_description']}")
+        print(f"tags: {output['tags']}")
+        print("=== end cast-canonicalize output ===\n")
