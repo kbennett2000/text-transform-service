@@ -17,8 +17,11 @@ from typing import Literal
 
 # A validator inspects the parsed output object and returns ``None`` when the output
 # is acceptable, or a human-readable reason string when it is not. Validators never
-# mutate the output (DESIGN §7.2).
-Validator = Callable[[dict], str | None]
+# mutate the output (DESIGN §7.2). A reason prefixed ``"warn:"`` is a soft finding the
+# pipeline records to ``meta.warnings`` instead of failing (T6, DESIGN §7.5). Most
+# validators take only the output; an options-aware one (e.g. depicted ⊆ cast) is called
+# as ``validator(output, options)`` when it sets a ``wants_options`` marker on itself.
+Validator = Callable[..., str | None]
 
 
 @dataclass(frozen=True)
