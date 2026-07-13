@@ -10,10 +10,12 @@ Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
 See `text-transform-service-DESIGN.md` for the full design and `text-transform-service-BUILD-PLAN.md`
 for the cycle-by-cycle build plan. Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
 
-> **Status:** Cycle T2 — the full request pipeline (registry, budget/truncation,
-> validators, retry, error taxonomy) runs end-to-end against a fake LLM, exposed via
-> `POST /v1/transform/{name}` and proven with the dev-only `echo` transform. Real Ollama
-> generation, production transforms, and auth arrive in later cycles (T3+).
+> **Status:** Cycle T3 — real Ollama generation with **schema-constrained decoding** is
+> live. `POST /v1/transform/{name}` runs the full pipeline against the model, single
+> in-flight generation is serialized (queue → `503 busy` on timeout), and
+> `POST /v1/models/unload` frees VRAM. Production transforms and auth arrive in later
+> cycles (T4+). See [`docs/models.md`](docs/models.md) for the resolved model bindings and
+> two Ollama-behaviour findings that shaped the client.
 
 ## Requirements
 
@@ -40,7 +42,7 @@ returns `200` with `status: "degraded"` rather than erroring.
 {
   "status": "ok",
   "ollama_reachable": true,
-  "models_loaded": ["qwen3:8b"],
+  "models_loaded": ["qwen3.5:9b"],
   "uptime_s": 8641
 }
 ```
@@ -62,9 +64,9 @@ omitting it means `{}`. A success is `200`:
 {
   "output": { "echo": "First sentence." },
   "meta": {
-    "transform": "echo", "transform_version": "0.1.0", "model": "qwen3:0.6b",
+    "transform": "echo", "transform_version": "0.1.0", "model": "qwen3.5:2b",
     "input_tokens_est": 6, "truncated": false, "attempts": 1,
-    "latency_ms": 3, "queued_ms": 0
+    "latency_ms": 3967, "queued_ms": 0
   }
 }
 ```
@@ -75,8 +77,25 @@ Errors always use `{"error": {"code": "...", "message": "...", "detail": {...}}}
 `model_unavailable`, `500 internal`. **Error codes are API — a change is a breaking change.**
 
 `echo` is a **dev-only** transform (registered only when `TTS_ENV=dev`) that proves the
-pipeline plumbing. In T2 there is no real generation backend yet, so a live POST returns
-`503 model_unavailable`; the real Ollama client arrives in T3.
+pipeline plumbing against a real model.
+
+Output is **schema-constrained**: the transform's `output_schema` is passed to Ollama as a
+grammar (`format`) *and* re-validated after generation; on validator failure the pipeline
+retries with a temperature bump before returning `422`. Qwen3.5 "thinking" is disabled
+(`think: false`) — it is pure latency for these extraction transforms.
+
+## Unloading models — `POST /v1/models/unload`
+
+Frees model VRAM (the endpoint the Scriptorium orchestrator calls before a render phase).
+Body `{"model": "qwen3.5:9b"}` targets one; `{}` unloads everything currently loaded. Each
+target is unloaded (`keep_alive: 0`) and the response reports models confirmed gone via
+`/api/ps`:
+
+```bash
+curl -s -X POST localhost:8712/v1/models/unload \
+  -H 'content-type: application/json' -d '{}' | jq
+# {"unloaded": ["qwen3.5:2b"]}
+```
 
 ## Configuration (env, all optional)
 
@@ -93,6 +112,11 @@ pipeline plumbing. In T2 there is no real generation backend yet, so a live POST
 
 (All of the above except `TTS_ENV` are the DESIGN §9 table; `TTS_ENV` is a T2 addition
 for the dev gate.)
+
+**Model bindings** (see [`docs/models.md`](docs/models.md)): the default per-transform model
+is `qwen3.5:9b`; the fast test/CI model (and `echo`'s binding) is `qwen3.5:2b`. These were
+rebound in T3 from the absent DESIGN §2 tags (`qwen3:8b` / `qwen3:0.6b`) to the same weight
+classes in the installed `qwen3.5` family.
 
 ## Development
 
