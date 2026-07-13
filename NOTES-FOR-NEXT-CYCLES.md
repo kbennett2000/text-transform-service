@@ -34,6 +34,19 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
 - **`meta.input_tokens_est`** is the estimate of the *post-truncation* text actually sent (equals
   the original when not truncated). Keep this if adding fields.
 
+## From T4 — for later cycles
+- **First production transform (`image-prompt`) needed zero new infrastructure** — it is pure
+  composition of the T2 pipeline + validators + budget and the T3 client. T5/T6 transforms should
+  be the same *except* T5's nested-field validator (see below). Template shipped verbatim from §7.1.
+- **Production transforms register unconditionally** in `register_all` (above the `is_dev` echo
+  block). Only `echo` is env-gated. Add T5/T6 transforms the same way.
+- **Reusable fixture + GPU pattern (T4):** `tests/fixtures/<domain>/*.txt`; unit tests load via a
+  `Path(__file__).parent / "fixtures" / ...` helper and drive the *real* `build_x()` transform with
+  `FakeLLMClient`; the GPU test runs all fixtures through `run_transform` on the real binding and
+  prints outputs with `capsys.disabled()` for the human-eyeball CYCLE-LOG paste. A no-raise result
+  already means schema + validators passed (the pipeline enforces both) — assert shape/`meta` only.
+- **No out-of-scope discoveries** surfaced in T4.
+
 ## From T3 — for later cycles
 - **Constrained decoding runs through `/api/generate`, not `/api/chat`** (this Ollama silently
   ignores `format` on `/api/chat`). T4–T6 transforms don't touch this — they just supply an
