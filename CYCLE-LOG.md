@@ -1,5 +1,39 @@
 # Cycle Log
 
+## T14 — Concurrency-burst reliability: bounded queue, reload-on-demand, readiness (2026-07-14)
+
+A consumer firing several transforms concurrently got intermittent 503s: many `503 busy` during
+bursts, interleaved with `503 model_unavailable` and repeated `POST /v1/models/unload`. Root cause:
+the `busy` storm was a *symptom* of eviction — an on-box unload (Scriptorium's GPU-phase-exclusivity)
+evicts the model mid-workload; the next generation cold-reloads while racing the unload
+(`model_unavailable`), and the reload latency backs the queue past `QUEUE_WAIT_S` (`busy`). Separately,
+`/health` reported `status:"ok"` with `models_loaded:[]`, so callers couldn't tell "up but not ready".
+
+**Shipped (ADR-0008, extends ADR-0005):**
+- **Bounded queue.** New `GenerationGate` (`src/tts/concurrency.py`) holds the single ADR-0005 slot,
+  keeps the `QUEUE_WAIT_S` time bound, and adds `MAX_QUEUE_DEPTH` (default `0`=unbounded): overflow
+  fast-fails `503 busy` instead of waiting out the full timeout. `busy` shape/semantics unchanged.
+- **Reload-on-demand + serialized unload.** `LLMClient.ensure_loaded(model)` (OllamaClient: `/api/ps`
+  check + warm `/api/generate` if absent; FakeLLM no-op) is called inside the slot before generating;
+  `/v1/models/unload` now holds the same slot. An ill-timed unload self-heals — the next transform
+  reloads transparently instead of `503 model_unavailable`. Genuine backend-down still → 503.
+- **Readiness.** New unauthenticated `GET /ready` + additive `ready` boolean on `/health` (true iff
+  the primary model `TTS_PRIMARY_MODEL`, default `qwen3.5:9b`, is resident). `/health` `status`
+  semantics unchanged — no §4 contract break. Neither endpoint 500s.
+- Config: `MAX_QUEUE_DEPTH` (0), `TTS_PRIMARY_MODEL` (`qwen3.5:9b`). Tests: concurrent-burst
+  (10/10 → 200, no busy), queue-depth fast-fail, reload-after-unload, `ensure_loaded` client, `/ready`.
+
+**Decisions (confirmed with product owner):** add a new `/ready` (not change `/health` status);
+self-heal only (no new unload access gate); keep `OLLAMA_KEEP_ALIVE=5m` (rely on reload-on-demand).
+
+**Live verification (dev box, real `echo`/`qwen3.5:2b`):** 10 concurrent transforms → all 200, 0 busy,
+`queued_ms` 0→38s (genuine serialization). Unload → `/api/ps` empty → transform → 200, model reloaded.
+`/health` showed `status:ok, ready:false` with no model resident; `/ready` reported `ready:false`.
+
+**Deviations:** `run_transform`'s `(semaphore, queue_wait_s)` params replaced by a single `gate`
+(all call sites updated). GPU-box live checks (`just test-gpu`) deferred to the 5070 per plan.
+**Scope:** no transform contracts, schemas, or error codes changed; no model substitution.
+
 ## T13 — `opinion-gate` batch completeness: q8_0 KV-cache host binding (2026-07-14)
 
 Mini-cycle, follow-on to T12. T12's `num_ctx` fix removed the loud **422** at 34-candidate volume,
