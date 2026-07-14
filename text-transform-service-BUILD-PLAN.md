@@ -39,7 +39,7 @@ Record the exact resolved tags (`ollama list`) in `docs/models.md` during T1. If
 | T7 | Ops hardening: listing, unload, auth, logging, systemd, README | T3 | S |
 | T8 | Brickfeed bench harness | T4 | Deferred — do not build unless dispatched |
 | T9 | Brickfeed `story-cover` (shipped); `opinion-gate` HELD out of §1 charter | T4 | S |
-| T10 | Brickfeed `opinion-piece` + `opinion-image-brief` (charter-check `opinion-piece` first) | T9 | M |
+| T10 | Brickfeed `opinion-gate` (shipped, ADR-0007) + `opinion-image-brief` (shipped); `opinion-piece` HELD (§1 long-form voiced) | T9 | M |
 
 T4, T5/T6, and T7 are independent of each other after T3; dispatch order above is the default.
 T9/T10 build the Brickfeed request pairs from `docs/requests/brickfeed-2026-07.md`.
@@ -211,6 +211,29 @@ First of the Brickfeed-requested transforms from `docs/requests/brickfeed-2026-0
 - [x] `make lint` clean; `make test` → 127 passed (120 prior + 7 new), 8 gpu deselected.
 - [x] `make test-gpu` on the 5070 green (`qwen3.5:9b`); story-cover outputs pasted into CYCLE-LOG for the eyeball (subject-neutral, no style leak).
 - [x] `opinion-gate` hold + charter escalation recorded (CYCLE-LOG + NOTES); no `opinion_gate.py` created.
+
+---
+
+## Cycle T10 — Brickfeed `opinion-gate` (ADR-0007) + `opinion-image-brief` (SHIPPED 2026-07-14)
+
+Second half of the Brickfeed request pair, plus the formal disposition of all four requests. The T9-held `opinion-gate` is admitted under a new product-owner ADR and shipped alongside `opinion-image-brief`. `opinion-piece` stays HELD.
+
+**Task 0 — ADR-0007 (transcribed).** `docs/adr/0007-safety-classification-exception.md`: §1's "no safety-relevant classification" becomes conditional (closed enum incl. `uncertain`; documented caller fail-closed obligation with TTS fail-loud; editorial-gating-with-human-audit scope only). `opinion-gate` meets all three conditions.
+
+**In scope (done):**
+- `src/tts/transforms/opinion_gate.py` (`opinion-gate`, v0.1.0, `qwen3.5:9b`) — `verdicts[]` of `{id, verdict∈{eligible,excluded,uncertain}, reason(1–200)}`, `maxItems:100`; `options_schema {}`; `input_budget=1600`, **`over_budget=reject`→413**; temp 0.0; nested `no_empty_strings` validators; docstring carries the caller fail-closed contract verbatim.
+- `src/tts/transforms/opinion_image_brief.py` (`opinion-image-brief`, v0.1.0, `qwen3.5:9b`) — `{imagePrompt(30–400), caption(15–160)}` subject-only; `input_budget=3000` truncate/head; reuses T9's subject-neutral validator set; template also forbids depicting the author / act of writing.
+- `docs/requests/brickfeed-2026-07-RESPONSE.md` — disposition of all four requests (tasks 1/2/4 routable, task 3 held); the caller-facing opinion-gate fail-closed contract.
+- 5+5 fixtures (`tests/fixtures/opinion_gate/`, `tests/fixtures/opinion_image_brief/`); 7+5 FakeLLM unit tests; a T10 GPU section. One authorized stability fix: T5's flaky `cast_canonicalize` sentence-count assertion loosened to `≥ 1`. Records: this section, the §0.2 index row, CYCLE-LOG T10, NOTES, ai-reference, for-developers.
+
+**Out of scope / not built:** `opinion-piece` — **HELD** (long-form voiced generation, DESIGN §1; ADR-0007 amended only the safety-classification line). Stays on Brickfeed's incumbent; revisit needs a bench + product decision. Also out: provider/bench code, brickfeed-repo edits, template edits to shipped transforms, DESIGN §1 prose rewrite (the ADR is the amendment record).
+
+**Reconciliations (binding contract, not the request doc):** *opinion-gate* — verdict enum gains `uncertain` (ADR-0007 cond. 1; caller maps uncertain/errors/missing-ids → exclude); `verdict` gets `"type":"string"`; `verdicts maxItems:100`, `reason minLength:1`; `over_budget=reject` kept. *opinion-image-brief* — subject-neutral (ADR-0004), depict subject not author; `word_range(8,60)`. Full detail in the module docstrings + CYCLE-LOG.
+
+**Acceptance**
+- [x] `make lint` clean; `make test` → 139 passed (127 prior + 12 new), 10 gpu deselected.
+- [x] `make test-gpu` on the 5070 green (`qwen3.5:9b`, 10 passed incl. the loosened T5 test); gate verdict table + image-brief bundles pasted into CYCLE-LOG for the eyeball (verdicts sane; imagery subject-only).
+- [x] ADR-0007 transcribed; RESPONSE doc written; `opinion-piece` HELD recorded; no `opinion_piece.py` created.
 
 ---
 

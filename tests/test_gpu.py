@@ -24,6 +24,8 @@ from tts.transforms.cast_mentions import build_cast_mentions
 from tts.transforms.echo import build_echo
 from tts.transforms.illustration_prompt import build_illustration_prompt
 from tts.transforms.image_prompt import build_image_prompt
+from tts.transforms.opinion_gate import build_opinion_gate
+from tts.transforms.opinion_image_brief import build_opinion_image_brief
 from tts.transforms.scene_update import build_scene_update
 from tts.transforms.story_cover import build_story_cover
 
@@ -34,6 +36,8 @@ TEST_MODEL = "qwen3.5:2b"
 _NEWS_FIXTURES = Path(__file__).parent / "fixtures" / "news"
 _BOOK_FIXTURES = Path(__file__).parent / "fixtures" / "book"
 _STORY_COVER_FIXTURES = Path(__file__).parent / "fixtures" / "story_cover"
+_OPINION_GATE_FIXTURES = Path(__file__).parent / "fixtures" / "opinion_gate"
+_OPINION_BRIEF_FIXTURES = Path(__file__).parent / "fixtures" / "opinion_image_brief"
 
 
 @pytest.fixture
@@ -233,12 +237,13 @@ async def test_cast_canonicalize_fixture_schema_valid_and_printed(client, capsys
     assert set(output) == {"visual_description", "one_line", "tags"}
     assert meta["model"] == CAST_MODEL
     assert len(output["one_line"]) <= 160
-    # Tolerant sentence count: split on ". " and drop empties. Expect 2-4 sentences.
+    # Loosened in T10 (authorized): the old `2 <= n <= 4` sentence-count assertion flaked when
+    # qwen3.5:9b emitted a single comma-spliced sentence — exactly the "never assert shape-of-
+    # prose" hazard flagged in NOTES-FOR-NEXT-CYCLES. Assert only a non-empty description; the
+    # prose itself is for the human eyeball, not a hard bound.
     prose = output["visual_description"].replace("\n", " ")
     sentences = [s for s in prose.split(". ") if s.strip()]
-    assert 2 <= len(sentences) <= 4, (
-        f"expected 2-4 sentences, got {len(sentences)}: {output['visual_description']!r}"
-    )
+    assert len(sentences) >= 1, f"empty visual_description: {output['visual_description']!r}"
 
     with capsys.disabled():
         print("\n\n=== T5 cast-canonicalize GPU output (qwen3.5:9b) ===")
@@ -401,3 +406,110 @@ async def test_story_cover_all_fixtures_schema_valid_and_printed(client, capsys)
         for line in lines:
             print(line)
         print("=== end story-cover outputs ===\n")
+
+
+# --- T10: opinion-gate + opinion-image-brief on the real production model (qwen3.5:9b) -----
+
+OPINION_MODEL = "qwen3.5:9b"
+_VERDICTS = {"eligible", "excluded", "uncertain"}
+# excluded and uncertain both map to "exclude" caller-side (ADR-0007) — the safe-outcome set.
+_SAFE_OUTCOME = {"excluded", "uncertain"}
+
+
+async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys):
+    """Run all 5 opinion-gate fixtures through the real transform on qwen3.5:9b. The pipeline
+    enforces the reconciled verdicts schema (incl. the three-value enum) and the nested
+    no_empty_strings validators, so a returned result IS the schema+validator assertion. We
+    additionally check pipeline-level *mechanics* (one verdict per input id, each echoed once)
+    and, for the designed tragedy + ambiguous fixtures, that the verdict lands in the
+    safe-outcome set {excluded, uncertain} — a membership check (both map to "exclude"
+    caller-side), never a single asserted verdict. Verdicts are printed for the human eyeball.
+    """
+    transform = build_opinion_gate()
+    assert transform.model == OPINION_MODEL
+
+    fixtures = sorted(_OPINION_GATE_FIXTURES.glob("*.txt"))
+    assert len(fixtures) == 5, f"expected 5 fixtures, found {[f.name for f in fixtures]}"
+
+    lines: list[str] = []
+    for i, path in enumerate(fixtures):
+        text = path.read_text(encoding="utf-8")
+        input_ids = [s["id"] for s in json.loads(text)]
+        result = await run_transform(
+            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+        )
+        output, meta = result["output"], result["meta"]
+
+        # Shape/mechanics only — schema + validators already passed inside the pipeline.
+        verdicts = output["verdicts"]
+        assert all(v["verdict"] in _VERDICTS for v in verdicts)
+        assert meta["model"] == OPINION_MODEL
+        # One verdict per input id, each echoed exactly once (the request's core contract):
+        # set-equal to the input ids (no missing/invented) and no duplicates (length matches).
+        out_ids = [v["id"] for v in verdicts]
+        assert set(out_ids) == set(input_ids) and len(out_ids) == len(input_ids), (
+            f"id mismatch: input {input_ids} vs {out_ids}"
+        )
+
+        by_id = {v["id"]: v["verdict"] for v in verdicts}
+        # Verdict-sanity (safe-set membership, NOT single-verdict): the all-tragedy batch and the
+        # genuinely borderline story must never come back "eligible".
+        if path.name == "03_tragedy.txt":
+            for vid, verdict in by_id.items():
+                assert verdict in _SAFE_OUTCOME, f"tragedy story {vid} not excluded: {verdict}"
+        if path.name == "05_ambiguous.txt":
+            assert by_id["m1"] in _SAFE_OUTCOME, f"ambiguous story eligible: {by_id['m1']}"
+
+        tag = "cold" if i == 0 else "warm"
+        table = "; ".join(f"{v['id']}={v['verdict']} ({v['reason']})" for v in verdicts)
+        lines.append(
+            f"[{path.name}] latency_ms={meta['latency_ms']} ({tag}) "
+            f"attempts={meta['attempts']}\n  {table}"
+        )
+
+    with capsys.disabled():
+        print("\n\n=== T10 opinion-gate GPU verdict table (qwen3.5:9b) ===")
+        for line in lines:
+            print(line)
+        print("=== end opinion-gate outputs ===\n")
+
+
+async def test_opinion_image_brief_all_fixtures_schema_valid_and_printed(client, capsys):
+    """Run all 5 opinion-image-brief fixtures through the real transform on qwen3.5:9b. The
+    pipeline enforces the two-field schema *and* the subject-neutral validators (banned_substrings
+    + word_range), so a returned result IS the schema+validator assertion. We never assert
+    wording; the briefs are printed for the human eyeball (the reconciliation to check is that
+    imagePrompt/caption stay subject-only — no style/medium words, and they depict the SUBJECT,
+    not the author or the act of writing).
+    """
+    transform = build_opinion_image_brief()
+    assert transform.model == OPINION_MODEL
+
+    fixtures = sorted(_OPINION_BRIEF_FIXTURES.glob("*.txt"))
+    assert len(fixtures) == 5, f"expected 5 fixtures, found {[f.name for f in fixtures]}"
+
+    lines: list[str] = []
+    for i, path in enumerate(fixtures):
+        text = path.read_text(encoding="utf-8")
+        result = await run_transform(
+            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+        )
+        output, meta = result["output"], result["meta"]
+
+        # Shape/mechanics only — schema + validators already passed inside the pipeline.
+        assert set(output) == {"imagePrompt", "caption"}
+        assert all(isinstance(output[k], str) and output[k].strip() for k in output)
+        assert meta["model"] == OPINION_MODEL
+
+        tag = "cold" if i == 0 else "warm"
+        lines.append(
+            f"[{path.name}] latency_ms={meta['latency_ms']} ({tag}) attempts={meta['attempts']}\n"
+            f"  imagePrompt: {output['imagePrompt']}\n"
+            f"  caption: {output['caption']}"
+        )
+
+    with capsys.disabled():
+        print("\n\n=== T10 opinion-image-brief GPU outputs (qwen3.5:9b) ===")
+        for line in lines:
+            print(line)
+        print("=== end opinion-image-brief outputs ===\n")

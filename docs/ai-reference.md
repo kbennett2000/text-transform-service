@@ -7,7 +7,8 @@
 **Identity.** Self-hosted FastAPI service. Named transforms map `text (+options) → schema-constrained
 JSON` via a local LLM (Ollama, `/api/generate`, constrained decoding). LAN-only, keyless by default,
 single-GPU (RTX 5070), port **8712**. **Not** a general LLM gateway. Consumers: Brickfeed News
-(`image-prompt`, `story-cover`) and Scriptorium bakery (`cast-*`, `scene-update`, `illustration-prompt`).
+(`image-prompt`, `story-cover`, `opinion-gate`, `opinion-image-brief`) and Scriptorium bakery
+(`cast-*`, `scene-update`, `illustration-prompt`).
 
 **Invariants (violating any is a bug).**
 - Error codes (below) are a **frozen contract** with two consumers — changing a code is breaking.
@@ -60,16 +61,24 @@ queued_ms` (+ `warnings:[...]` **only when** a soft validator fired; absent on c
 | `scene-update` | Scriptorium P3 §7.4 | `qwen3.5:9b` | 1600 | **reject** → 413 | one page (call **in order**) | `{prior_ledger: obj\|null, cast_names[], era?}` (thread each output ledger → next `prior_ledger`) | `location, time_of_day, atmosphere, present, scene_changed, visual_salience, best_visual_beat, carry_notes` |
 | `illustration-prompt` | Scriptorium P5 §7.5 | `qwen3.5:9b` | 1600 | **reject** → 413 | selected page | `{ledger: obj, cast:[{name, one_line}], era?}` | `prompt, depicted, shot(enum), avoid?` — `depicted⊆cast` is a **soft** validator → `meta.warnings` |
 | `story-cover` | Brickfeed (request §1, T9) | `qwen3.5:9b` | 1200 | truncate (no-op on single-paragraph input; never rejects) | source context (title/publisher/URL) | `{}` | `headline(10–200), description(40–600), imagePrompt(30–400, 8–60w, subject-only), category(enum×8), caption(15–160)` |
+| `opinion-gate` | Brickfeed (request §2, T10) | `qwen3.5:9b` | 1600 | **reject** → 413 | JSON array `[{id,title,summary}]` | `{}` | `verdicts[]:{id, verdict(enum: eligible/excluded/uncertain), reason(1–200)}` (maxItems 100) — **safety classifier under ADR-0007; caller fail-closes** |
+| `opinion-image-brief` | Brickfeed (request §4, T10) | `qwen3.5:9b` | 3000 | truncate (`head`) | finished piece (title+body) + subject context | `{}` | `imagePrompt(30–400, 8–60w, subject-only), caption(15–160)` — depicts the subject, never the author/act-of-writing |
 | `echo` | dev-only (`TTS_ENV=dev`) | `qwen3.5:2b` | — | — | any | `{}` | `echo` (first sentence) — plumbing check, not a workload |
 
 Style/medium/camera words are always caller-side; their appearance in an `image-prompt` /
 `illustration-prompt` / `story-cover` `imagePrompt` output is drift → `422`. Brickfeed's toy-brick
 styling is applied caller-side, never in a transform (ADR-0004).
 
-**Held (not registered):** `opinion-gate` (Brickfeed request §2) is a fail-closed, safety-load-bearing
-topic gate — "safety-relevant classification", which DESIGN §1 excludes. Held as of T9 pending a
-product-owner charter call; the incumbent Claude gate stays live. `opinion-piece` +
-`opinion-image-brief` are T10 (`opinion-piece` needs its own §1 long-form-voiced charter check first).
+**`opinion-gate` is a safety classifier (ADR-0007).** It is admitted to the charter *conditionally*
+(§1 otherwise excludes safety-relevant classification). It is **fail-loud** — it emits an honest
+`uncertain` verdict and never substitutes a default. The **caller must fail-closed**: treat every
+4xx/5xx, every `uncertain` verdict, and any missing/duplicate `id` as *exclude*. `verdict` is the
+sole decision field; `reason` is explanatory only. See `docs/adr/0007-safety-classification-exception.md`
+and `docs/requests/brickfeed-2026-07-RESPONSE.md`.
+
+**Held (not registered):** `opinion-piece` (Brickfeed request §3) — long-form *voiced* generation,
+which DESIGN §1 excludes; ADR-0007 amended only the safety-classification line, not this one. Not
+built; the task stays on Brickfeed's incumbent provider pending a bench + product decision.
 
 ## Config (env, all optional)
 

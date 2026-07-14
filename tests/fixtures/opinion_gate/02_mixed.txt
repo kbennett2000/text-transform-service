@@ -1,0 +1,1 @@
+[{"id":"c3","title":"Mayor caught napping during ribbon-cutting","summary":"A viral clip shows the mayor dozing off at a ceremony."},{"id":"d4","title":"Charity gala raises funds for storm victims","summary":"An event raised money for families displaced by flooding."}]

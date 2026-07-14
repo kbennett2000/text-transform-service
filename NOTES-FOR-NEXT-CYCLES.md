@@ -2,7 +2,46 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
+## From T10 — Brickfeed request set closed out
+- **`opinion-gate` shipped under ADR-0007.** The product owner amended §1's blanket
+  "no safety-relevant classification" into a *conditional* exclusion
+  (`docs/adr/0007-safety-classification-exception.md`). Any **future** safety-relevant
+  classifier must satisfy all three ADR-0007 conditions or be HELD: (1) closed enum verdict
+  incl. an explicit `uncertain` (no free text drives the decision); (2) module documents the
+  caller fail-closed obligation, TTS itself stays fail-loud (no fallback); (3) scope = editorial
+  gating of machine-selected public content with human audit — NOT user-generated moderation.
+  Reuse `opinion-gate`'s shape (three-value enum, `over_budget=reject`, nested
+  `no_empty_strings` on the id + reason) as the template.
+- **`opinion-piece` remains HELD (§1 long-form voiced generation).** ADR-0007 amended only the
+  *safety-classification* line, not the *long-form-voiced* line, and the product owner did not
+  authorize voiced generation. It is **not built** and stays on Brickfeed's incumbent provider.
+  Revisiting needs a bench (does the local model voice acceptably?) **and** an explicit product
+  decision / new ADR — never an executor call. This closes the T9 ⚠️ warning below.
+- **The Brickfeed request set is fully dispositioned.** `docs/requests/brickfeed-2026-07-RESPONSE.md`
+  is the contract the Brickfeed *provider* cycle reads: tasks 1 (`story-cover`), 2
+  (`opinion-gate`), 4 (`opinion-image-brief`) routable; task 3 (`opinion-piece`) held. **The
+  opinion-gate caller fail-closed contract lives there + in the module docstring** — the caller
+  must map every 4xx/5xx, every `uncertain` verdict, and any missing/duplicate id to *exclude*.
+  After T10, TTS owes Brickfeed nothing further.
+- **`opinion-image-brief` reused T9's subject-neutral set verbatim** (`banned_substrings` +
+  `word_range("imagePrompt", 8, 60)`), plus a template rule to depict the *subject*, not the
+  author or the act of writing. Confirmed on the 5070: no style/medium leak, no writers/desks.
+- **New fixture domains:** `tests/fixtures/opinion_gate/*.txt` (JSON-array batches, incl. a
+  designed all-tragedy and a borderline case) and `tests/fixtures/opinion_image_brief/*.txt`
+  (synthetic finished-piece inputs — bodies are hand-written stand-ins, since `opinion-piece`
+  is not built). The T10 GPU test globs each `*.txt`.
+- **id-completeness is not schema-enforceable** for batch transforms — validators see output +
+  options, never the input `text`. `opinion-gate` relies on the caller fail-closed rule (missing
+  id → exclude); the GPU test checks id-set equality as a mechanics guard. Any future batch
+  transform with a per-input-id output contract inherits this gap.
+- **✅ T5 `cast_canonicalize` GPU flake fixed (authorized in T10).** The `2 ≤ n ≤ 4`
+  sentence-count assertion is loosened to `≥ 1` — it was exactly the "never assert
+  shape-of-prose" hazard. Closes the T9 flake note below.
+
 ## From T9 — for T10 (Brickfeed opinion pair) and the product owner
+- **✅ RESOLVED in T10 (ADR-0007).** ~~`opinion-gate` is HELD out of the §1 charter — needs a
+  product-owner call, not a build.~~ Shipped in T10 under ADR-0007 (see the From T10 section).
+  Original context retained below for the record.
 - **`opinion-gate` is HELD out of the §1 charter — needs a product-owner call, not a build.**
   The Brickfeed request (`docs/requests/brickfeed-2026-07.md` §2) is a **fail-closed,
   safety-load-bearing** topic gate (exclude tragedy/violence/death; if uncertain, exclude). That
