@@ -75,11 +75,13 @@ KV cache 238 MiB (q8_0, vs 448 MiB f16). nvidia-smi during active generation: 7.
 **Verification**
 - `make lint` clean; `make test` → non-GPU suite unchanged and green (no code paths changed).
 - Phase A live gate (above): flash-on + q8_0, 3× stable, every pass-bar criterion met.
-- **Pending human (sudo, like the T12 redeploy):** apply the drop-in to the prod `ollama.service`,
-  `systemctl restart ollama`, then re-run `make test-gpu` 3× against the reconfigured prod daemon
-  (the T12 volume test asserts id-set equality at 14144 — it will pass with the binding, tail-drop
-  without) and POST the 34-fixture through the deployed service → 200 complete. Recorded here when
-  done. The Phase A gate above is the same config verified 3× against a throwaway daemon.
+- **Post-apply, against the reconfigured PROD daemon (2026-07-14, binding applied by Kris — sudo):**
+  `systemctl show ollama.service` confirms `OLLAMA_FLASH_ATTENTION=1` + `OLLAMA_KV_CACHE_TYPE=q8_0`
+  live. Volume GPU suite (21/34/60, id-set equality) run **3× consecutively → all green** (76.8 s /
+  72.6 s / 72.6 s; 60/60 complete each run). Live **34-fixture POST through the deployed service on
+  :8712 → HTTP 200, 34/34 verdicts, id-set equal, no dupes, 22.0 s** (`truncated=false`, `attempts=1`,
+  `input_tokens_est=3245`). Peak VRAM during the call **7552 / 12227 MiB → ~4.6 GB free** (bar: ≥2 GB).
+  The prod daemon now matches the Phase A throwaway-daemon result; the standing hold lifts.
 
 **Deviations from the plan / ruling.**
 1. **Winning config is flash-*on* + q8_0, not the ruling's flash-*off* + q8_0** — flash-off + q8_0
@@ -87,10 +89,11 @@ KV cache 238 MiB (q8_0, vs 448 MiB f16). nvidia-smi during active generation: 7.
    test found the config that satisfies every pass-bar criterion; it is a q8_0 KV binding exactly as
    the ruling intended, with flash pinned on (mandatory). This also corrects the prior root-cause
    theory (flash attention was blamed; the f16 KV cache was the culprit).
-2. **Prod-daemon 3× GPU re-verification is post-apply (human sudo)**, not done in-cycle — the box
+2. **Prod-daemon 3× GPU re-verification was post-apply (human sudo)**, not done in-cycle — the box
    has no passwordless sudo and the executor does not reconfigure the prod daemon (same boundary as
-   redeploy). The equivalent 3× verification was done against a throwaway daemon with the identical
-   binding.
+   redeploy). Kris applied the drop-in on 2026-07-14; the executor then ran the 3× suite + live POST
+   against the reconfigured prod daemon (see Verification above, all green). An equivalent 3× run was
+   also done against a throwaway daemon with the identical binding during Phase A.
 
 ## T12 — registry-wide `num_ctx` fix for large-batch output truncation (2026-07-13)
 
