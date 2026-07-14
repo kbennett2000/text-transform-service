@@ -2,10 +2,10 @@
 
 Transform modules live here, one per file. :func:`register_all` holds the explicit
 registration list and is called once at app startup; it clears the registry first so it
-is idempotent (important for tests). ``image-prompt`` (T4) and the ``cast-*`` pair (T5)
-are production transforms; the remaining production transforms (scene-update,
-illustration-prompt) arrive in cycle T6. The dev-only ``echo`` transform is gated on
-``TTS_ENV=dev``.
+is idempotent (important for tests). ``image-prompt`` (T4), the ``cast-*`` pair (T5), and
+``scene-update`` + ``illustration-prompt`` (T6) are production transforms — with T6 the
+service covers every Scriptorium bake transform (P1/P2/P3/P5). The dev-only ``echo``
+transform is gated on ``TTS_ENV=dev``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ from tts.registry import REGISTRY, register
 from tts.transforms.cast_canonicalize import build_cast_canonicalize
 from tts.transforms.cast_mentions import build_cast_mentions
 from tts.transforms.echo import build_echo
+from tts.transforms.illustration_prompt import build_illustration_prompt
 from tts.transforms.image_prompt import build_image_prompt
+from tts.transforms.scene_update import build_scene_update
 
 
 def register_all(settings: Settings) -> None:
@@ -30,6 +32,8 @@ def register_all(settings: Settings) -> None:
     register(build_image_prompt())
     register(build_cast_mentions())
     register(build_cast_canonicalize())
+    register(build_scene_update())
+    register(build_illustration_prompt())
 
     if settings.is_dev:
         register(build_echo())

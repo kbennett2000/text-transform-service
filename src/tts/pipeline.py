@@ -120,26 +120,44 @@ def _enforce_budget(transform: Transform, text: str) -> tuple[str, bool]:
     return strategy(text, transform.input_budget)
 
 
-def _attempt_reason(transform: Transform, raw: str) -> tuple[dict | None, str | None]:
-    """Parse+validate one generation. Returns ``(output, None)`` on success or
-    ``(None, reason)`` on failure (invalid JSON, schema violation, or a validator)."""
+def _attempt_reason(
+    transform: Transform, raw: str, options: dict
+) -> tuple[dict | None, str | None, list[str]]:
+    """Parse+validate one generation.
+
+    Returns ``(output, None, warnings)`` on success or ``(None, reason, [])`` on a hard
+    failure (invalid JSON, schema violation, or a hard validator). A validator reason that
+    begins with ``"warn:"`` is a *soft* finding: its remainder is collected into ``warnings``
+    and validation continues (it never fails the attempt, never triggers a retry). Only the
+    warnings of a successful attempt are meaningful; a hard-failed attempt returns ``[]``.
+    """
     try:
         output = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as exc:
-        return None, f"invalid JSON: {exc}"
+        return None, f"invalid JSON: {exc}", []
 
     if transform.output_schema:
         try:
             jsonschema.validate(output, transform.output_schema)
         except jsonschema.ValidationError as exc:
-            return None, f"schema: {exc.message}"
+            return None, f"schema: {exc.message}", []
 
+    warnings: list[str] = []
     for validator in transform.validators:
-        reason = validator(output)
-        if reason is not None:
-            return None, reason
+        # Options-aware validators (e.g. depicted ⊆ cast) opt in via a `wants_options`
+        # marker; the common case stays single-arg (DESIGN §6 Validator contract).
+        if getattr(validator, "wants_options", False):
+            reason = validator(output, options)
+        else:
+            reason = validator(output)
+        if reason is None:
+            continue
+        if reason.startswith("warn:"):
+            warnings.append(reason[len("warn:") :])
+            continue
+        return None, reason, []
 
-    return output, None
+    return output, None, warnings
 
 
 async def run_transform(
@@ -170,6 +188,7 @@ async def run_transform(
     gen_start = time.perf_counter()
     reasons: list[str] = []
     output: dict | None = None
+    warnings: list[str] = []
     attempts = 0
     try:
         for attempt in range(transform.retries + 1):
@@ -193,7 +212,7 @@ async def run_transform(
                     "generation backend unavailable",
                     exc.detail or None,
                 ) from exc
-            output, reason = _attempt_reason(transform, raw)
+            output, reason, warnings = _attempt_reason(transform, raw, options)
             if output is not None:
                 break
             reasons.append(reason)
@@ -219,4 +238,8 @@ async def run_transform(
         "latency_ms": latency_ms,
         "queued_ms": queued_ms,
     }
+    # Soft-validator findings from the successful attempt (DESIGN §7.5 depicted ⊆ cast).
+    # Additive and omitted when empty, so the §4 meta shape is unchanged in the common case.
+    if warnings:
+        meta["warnings"] = warnings
     return {"output": output, "meta": meta}

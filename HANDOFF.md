@@ -1,21 +1,34 @@
 # Handoff
 
 ## Current state
-Cycle **T5 complete** (PR open for human merge). The **two Scriptorium cast transforms ship**:
-- `transforms/cast_mentions.py` — `cast-mentions` (DESIGN §7.2), `qwen3.5:9b`. Per-page character
-  extraction → mentions array (`name`/`aliases`/`descriptors`/`is_person`). Budget 1600 est-tokens
-  with **`over_budget="reject"`** (page over budget → 413; paginator-bug posture). Validator
-  `no_empty_strings("mentions[].name")`.
-- `transforms/cast_canonicalize.py` — `cast-canonicalize` (DESIGN §7.3), `qwen3.5:9b`. Per-character
-  evidence (rides in `options`; `text` empty) → paintable canonical description (`visual_description`
-  80–700, `one_line` 15–160, `tags` ≤8). Validator bans trait-drift words in `visual_description`.
-- `validators.py` — **nested-field validator now exists**: `no_empty_strings` handles the
-  `mentions[].name` array-of-objects path (one level). Resolves the T2/T3 carried blocker.
-- Both registered in **every** environment (production; `echo` stays dev-gated).
-- `tests/fixtures/book/` — 4 *Time Machine* (PG #35) excerpts (555–608 w, the four §-cases) +
-  `canonicalize_time_traveller.json` options payload.
-- 91 non-GPU tests pass; 6 GPU tests pass on the 5070. Both §7.2/§7.3 templates shipped **verbatim**
-  (no refinement; both `version` `0.1.0`). GPU outputs pasted in CYCLE-LOG.
+Cycle **T6 complete** (PR open for human merge). With T6 the service exposes **every Scriptorium bake
+transform** (P1 cast-mentions, P2 cast-canonicalize, P3 scene-update, P5 illustration-prompt). The **two
+final Scriptorium transforms ship**, plus the soft-validator mechanism:
+- `transforms/scene_update.py` — `scene-update` (DESIGN §7.4), `qwen3.5:9b`. Per-page rolling ledger +
+  salience. Called **strictly in order**; caller threads each returned ledger into the next call's
+  `prior_ledger` (object-or-null). 8-field ledger output; budget 1600 **`over_budget="reject"`**;
+  validator `banned_substrings("best_visual_beat", ["\n"])`.
+- `transforms/illustration_prompt.py` — `illustration-prompt` (DESIGN §7.5), `qwen3.5:9b`. (page, ledger,
+  cast) → one SDXL subject prompt (`prompt` 60–600, `depicted` ≤4, `shot` enum). Hard validators
+  `word_range(20,90)` + `banned_substrings` (medium words); **soft** `depicted_subset_of_cast()`.
+- `pipeline.py` — **soft-validator mechanism**: a `warn:<reason>` validator finding lands in
+  `meta.warnings[]` without failing/retrying; `meta.warnings` is **omitted when empty** (§4 meta shape
+  unchanged). Warnings taken only from the successful attempt.
+- `validators.py` — `depicted_subset_of_cast()`, an **options-aware** validator (opts in via a
+  `wants_options` marker → pipeline calls it `validator(output, options)`). Existing validators untouched.
+- Both transforms registered in **every** environment (production; `echo` stays dev-gated).
+- `tests/fixtures/book/` — **3 consecutive** *Time Machine* pages `page_[abc].txt` (Ch. I dinner → Ch. II
+  vanishing; stable smoking-room location) + `scene_start.json` + `illustration_cast.json`, alongside T5's
+  `0[1-4]_*.txt` excerpts.
+- 105 non-GPU tests pass; 7 GPU tests pass on the 5070. Both §7.4/§7.5 templates shipped **verbatim** (both
+  `version` `0.1.0`). GPU outputs (3 threaded ledgers + the illustration prompt, with the soft warn firing
+  live) pasted in CYCLE-LOG.
+
+## Earlier: T5 — the cast transforms (DESIGN §7.2–7.3)
+- `transforms/cast_mentions.py` (`qwen3.5:9b`, budget 1600 `reject`, validator
+  `no_empty_strings("mentions[].name")`) and `transforms/cast_canonicalize.py` (`qwen3.5:9b`, evidence in
+  `options`). `validators.py` gained the nested `mentions[].name` path. Fixtures: 4 per-case PG #35
+  excerpts + `canonicalize_time_traveller.json`.
 
 ## Earlier: T4 — `image-prompt` (DESIGN §7.1)
 - `transforms/image_prompt.py`, `qwen3.5:9b`. News story → one style-free image *subject* prompt.
@@ -39,16 +52,11 @@ Cycle **T5 complete** (PR open for human merge). The **two Scriptorium cast tran
    switch is a localized change inside `OllamaClient.chat`.
 
 ## Next up
-- **T6** — `scene-update` + `illustration-prompt` (§7.4–7.5), bound to `qwen3.5:9b`. Adds the soft
-  **`meta.warnings` validator mechanism** (validators may return `warn:<reason>` → lands in
-  `meta.warnings[]` without failing) — a small pipeline extension, unit-test it. `illustration-prompt`
-  uses it for the `depicted ⊆ cast names` check (warn, not 422). `scene-update` budget is `reject`
-  (like cast-mentions) and threads a ledger **strictly in order** (each call's `prior_ledger` = the
-  previous output). Fixtures: **3 _consecutive_** *Time Machine* pages (extend `tests/fixtures/book/`,
-  which currently holds non-consecutive per-case excerpts) + a hand-written `prior_ledger: null` start.
-  Reuse the nested validator, the `book/` loader, and the GPU-eyeball pattern.
-- **T7** — auth (`X-Transform-Key`), `GET /v1/transforms`, structured logging + `X-Request-Id`,
-  systemd unit under `deploy/`.
+- **T7 (ops hardening)** — auth (`X-Transform-Key` dependency, active only when `TRANSFORM_API_KEY` set;
+  `/health` exempt; 401 in the §4 envelope), `GET /v1/transforms` (serialize the registry incl. schemas),
+  structured logging (one JSON line/request per DESIGN §9) + `X-Request-Id`, and a
+  `deploy/text-transform-service.service` systemd unit + `deploy/README.md`. No new transforms — the
+  Scriptorium bake surface is complete. See BUILD-PLAN §Cycle T7.
 
 ## Open questions / notes
 - Production-transform bindings must use `qwen3.5:9b` (not the DESIGN §2 `qwen3:8b` string).

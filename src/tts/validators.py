@@ -7,6 +7,13 @@ Validators run *after* JSON-schema validation and never mutate the output.
 Field access is top-level (``output[field]``), except :func:`no_empty_strings`, which
 also accepts a one-level array-of-objects path (``mentions[].name``) for cast-mentions
 (T5, DESIGN §7.2).
+
+Most validators inspect the output alone. A validator that also needs the request
+``options`` (e.g. :func:`depicted_subset_of_cast`, which checks output against the caller's
+cast list) sets a ``wants_options`` marker on its callable; the pipeline then calls it as
+``validator(output, options)``. Such a validator may return a **soft** finding — a reason
+string prefixed ``"warn:"`` — which the pipeline records to ``meta.warnings`` without
+failing the request (T6, DESIGN §7.5).
 """
 
 from __future__ import annotations
@@ -88,6 +95,33 @@ def no_empty_strings(field: str) -> Validator:
                     return f"{field}[{i}]: empty string"
         return None
 
+    return _check
+
+
+def depicted_subset_of_cast() -> Validator:
+    """Soft-warn if ``output["depicted"]`` names anyone not in the caller's ``options["cast"]``.
+
+    This is the DESIGN §7.5 ``depicted ⊆ cast-names-or-empty`` check. It is deliberately a
+    **soft** validator: a stray depicted name is a mild grounding drift the caller may want to
+    know about, not a reason to fail the whole illustration prompt. The returned reason is
+    therefore prefixed ``"warn:"`` so the pipeline records it to ``meta.warnings`` and still
+    returns 200. An empty ``depicted`` (subset of anything) never warns.
+
+    Being options-aware, the returned callable sets ``wants_options = True`` so the pipeline
+    invokes it as ``validator(output, options)``.
+    """
+
+    def _check(output: dict, options: dict) -> str | None:
+        cast = options.get("cast", [])
+        names = {c["name"] for c in cast if isinstance(c, dict) and "name" in c}
+        depicted = output.get("depicted", [])
+        if isinstance(depicted, list):
+            extra = [d for d in depicted if d not in names]
+            if extra:
+                return f"warn:depicted not in cast: {extra}"
+        return None
+
+    _check.wants_options = True
     return _check
 
 

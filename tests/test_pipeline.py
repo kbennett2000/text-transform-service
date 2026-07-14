@@ -125,6 +125,50 @@ async def test_validator_failure_drives_retry_then_422():
     assert all("banned substring" in r for r in exc.value.detail["reasons"])
 
 
+# ---- soft validators / meta.warnings (T6, DESIGN §7.5) ---------------------------
+
+def _always_warn(reason: str):
+    """A soft validator that always returns a ``warn:`` finding."""
+
+    def _v(output: dict) -> str | None:
+        return f"warn:{reason}"
+
+    return _v
+
+
+async def test_soft_validator_warning_lands_in_meta_and_does_not_retry():
+    # A `warn:` reason is recorded to meta.warnings and never fails/retries the request.
+    t = _transform(validators=(_always_warn("soft note"),))
+    fake = FakeLLMClient(['{"echo": "ok"}'])
+    result = await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert result["output"] == {"echo": "ok"}
+    assert result["meta"]["warnings"] == ["soft note"]
+    assert result["meta"]["attempts"] == 1
+    assert len(fake.calls) == 1  # single generation — a soft finding is not a retry trigger
+
+
+async def test_no_warnings_omits_meta_warnings_key():
+    # The common case: no soft findings -> meta has no `warnings` key (§4 shape unchanged).
+    t = _transform()
+    fake = FakeLLMClient(['{"echo": "ok"}'])
+    result = await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert "warnings" not in result["meta"]
+
+
+async def test_warning_from_a_discarded_attempt_does_not_surface():
+    # Attempt 1 both warns AND hard-fails -> retried; its warning belongs to the rejected
+    # generation and must not leak into the successful attempt's meta.
+    def warn_on_bad(output: dict) -> str | None:
+        return "warn:saw-bad" if output.get("echo") == "BAD" else None
+
+    t = _transform(retries=1, validators=(warn_on_bad, banned_substrings("echo", ["BAD"])))
+    fake = FakeLLMClient(['{"echo": "BAD"}', '{"echo": "ok"}'])
+    result = await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert result["output"] == {"echo": "ok"}
+    assert result["meta"]["attempts"] == 2
+    assert "warnings" not in result["meta"]
+
+
 async def test_queue_timeout_is_503_busy():
     t = _transform()
     sem = asyncio.Semaphore(1)
