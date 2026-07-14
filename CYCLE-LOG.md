@@ -2,6 +2,22 @@
 
 ## T7 — Ops hardening: listing · auth · logging · systemd · README (2026-07-13)
 
+**Deploy — T7 human box CLOSED (2026-07-13).** Installed under systemd on the 5070 (host G434) per
+`deploy/README.md`, keyless (LAN posture, `TRANSFORM_API_KEY` unset). Tree rsynced to
+`/opt/text-transform-service`; unit at `/etc/systemd/system/text-transform-service.service`; runs as
+`User=kb`. Verified: `systemctl status` → **active (running)**; `is-enabled` → **enabled**; startup log
+`startup model check: all 1 bound model(s) present in Ollama`; `curl :8712/health` →
+`{"status":"ok","ollama_reachable":true,"models_loaded":[],"uptime_s":25}`.
+- **Deviation 1 — `User=kris`→`User=kb`.** DESIGN §9's `User=kris` account does not exist on this box
+  (only `kb`, uid 1000); systemd would fail with "Failed to determine user credentials". Repo unit fixed
+  to `User=kb` (operator decision).
+- **Deviation 2 (deploy-doc bug, fixed) — `sudo uv sync` → `uv sync` as the service user.** `sudo uv sync`
+  built the venv against a **root-managed** CPython under `/root/.local/share/uv/python/…` (mode 700),
+  which the `User=kb` service cannot exec → `status=203/EXEC`. Rebuilt the venv as `kb` (no sudo) so the
+  interpreter lives under `/home/kb` and is reachable; `deploy/README.md` §2 corrected accordingly.
+- **Reboot-survival** left for the operator to confirm (unit is `enabled`; `After=`/`Wants=ollama.service`
+  order it behind Ollama on boot). **M1 status: TTS is deployed and feature-complete on the 5070.**
+
 **Shipped** — the service is now **deployable and pleasant to operate**; no new transforms, no
 pipeline behavior change. With this cycle TTS is **feature-complete for M1**, pending the human deploy.
 - `app.py` — `GET /v1/transforms` (DESIGN §4): serializes the registry sorted by name via
