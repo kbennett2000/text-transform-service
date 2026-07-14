@@ -1,0 +1,16 @@
+[Unit]
+Description=text-transform-service
+After=network-online.target ollama.service
+Wants=ollama.service
+
+[Service]
+User=kris
+WorkingDirectory=/opt/text-transform-service
+# Optional: supply TRANSFORM_API_KEY, TTS_ENV=prod, etc. without editing this unit.
+# Create /opt/text-transform-service/.env (chmod 600) or delete this line to run keyless.
+EnvironmentFile=-/opt/text-transform-service/.env
+ExecStart=/opt/text-transform-service/.venv/bin/uvicorn tts.app:app --host 0.0.0.0 --port 8712
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
