@@ -25,8 +25,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from tts import __version__
+from tts.concurrency import GenerationGate
 from tts.config import Settings, get_settings
-from tts.health import probe_ollama
+from tts.health import is_ready, probe_ollama
 from tts.llm import LLMBackendError, OllamaClient
 from tts.logging_setup import configure_logging
 from tts.pipeline import TransformError, run_transform
@@ -65,8 +66,12 @@ app.state.settings = get_settings()
 # Install the structured access log + diagnostic handlers (DESIGN §9). Idempotent.
 configure_logging(app.state.settings.log_level)
 app.state.started_at = time.monotonic()
-# Single in-flight generation slot (ADR-0005).
-app.state.gen_semaphore = asyncio.Semaphore(1)
+# Single in-flight generation slot (ADR-0005), bounded by queue depth (T14 / ADR-0008).
+# The unload route acquires the same gate so eviction can't race a generation.
+app.state.gen_gate = GenerationGate(
+    queue_wait_s=app.state.settings.queue_wait_s,
+    max_queue_depth=app.state.settings.max_queue_depth,
+)
 # Real generation backend (T3). The constructor opens no connections; tests override the
 # get_llm_client dependency to inject a FakeLLM/stub instead of hitting Ollama.
 app.state.llm = OllamaClient(
@@ -209,16 +214,39 @@ async def _on_transform_error(request: Request, exc: TransformError) -> JSONResp
 async def health() -> dict:
     """Report service + Ollama health. Never 500s — degradation is data (DESIGN §4).
 
-    ``status`` is ``"ok"`` iff Ollama's ``/api/ps`` answered, else ``"degraded"``.
+    ``status`` is ``"ok"`` iff Ollama's ``/api/ps`` answered, else ``"degraded"`` — the
+    unchanged §4 contract. As of T14, an additive ``ready`` boolean reports whether the
+    primary model is actually resident (true readiness); it does not affect ``status``.
     """
     settings = _settings()
     result = await probe_ollama(settings.ollama_url)
     uptime_s = int(time.monotonic() - app.state.started_at)
     return {
         "status": "ok" if result.reachable else "degraded",
+        "ready": is_ready(result, settings.primary_model),
         "ollama_reachable": result.reachable,
         "models_loaded": result.models_loaded,
         "uptime_s": uptime_s,
+    }
+
+
+@app.get("/ready")
+async def ready() -> dict:
+    """Report true model readiness for serving a transform (T14). Never 500s.
+
+    Distinct from ``/health`` ``status``: ``ready`` is true iff Ollama is reachable AND the
+    primary model (``TTS_PRIMARY_MODEL``, default the production working binding) is resident.
+    Lets a caller distinguish "up but no model loaded" (e.g. just after a ``/v1/models/unload``)
+    from "loaded and able to serve immediately". Unauthenticated, like ``/health``.
+    """
+    settings = _settings()
+    result = await probe_ollama(settings.ollama_url)
+    return {
+        "ready": is_ready(result, settings.primary_model),
+        "ollama_reachable": result.reachable,
+        "models_loaded": result.models_loaded,
+        "primary_model": settings.primary_model,
+        "uptime_s": int(time.monotonic() - app.state.started_at),
     }
 
 
@@ -251,15 +279,13 @@ async def transform(
         request.state.error_code = "model_unavailable"
         return _error_response(503, "model_unavailable", "no generation backend configured")
 
-    settings = _settings()
     try:
         result = await run_transform(
             transform_def,
             req.text,
             req.options,
             llm,
-            app.state.gen_semaphore,
-            settings.queue_wait_s,
+            app.state.gen_gate,
         )
         request.state.log_meta = result["meta"]
         return result
@@ -280,21 +306,29 @@ async def unload_models(req: UnloadRequest, llm=Depends(get_llm_client)):
     still loaded is re-read so the response reports only models confirmed gone. This is the
     endpoint the Scriptorium orchestrator calls before a render phase (GPU-phase exclusivity).
     Respects auth (ADR-0003) like the other ``/v1/*`` routes.
+
+    The eviction is performed while holding the generation slot (T14), so an unload can never
+    race an in-flight generation. If the slot can't be acquired within ``QUEUE_WAIT_S`` (a
+    generation is running long), the request 503s ``busy`` via the global handler — the caller
+    (between phases) simply retries.
     """
     if llm is None:
         return _error_response(503, "model_unavailable", "no generation backend configured")
     try:
         targets = [req.model] if req.model else await llm.list_loaded()
-        for model in targets:
-            await llm.unload(model)
-        # Confirm via /api/ps. Ollama does not drop a model the instant keep_alive:0 returns,
-        # so poll briefly (bounded) rather than racing a single read.
-        still_loaded = set(await llm.list_loaded())
-        for _ in range(_UNLOAD_CONFIRM_POLLS):
-            if not (set(targets) & still_loaded):
-                break
-            await asyncio.sleep(_UNLOAD_CONFIRM_INTERVAL_S)
+        # Serialize eviction against generation: hold the slot for the unload + confirmation
+        # so no generation can reload the model mid-unload (T14).
+        async with app.state.gen_gate.slot():
+            for model in targets:
+                await llm.unload(model)
+            # Confirm via /api/ps. Ollama does not drop a model the instant keep_alive:0
+            # returns, so poll briefly (bounded) rather than racing a single read.
             still_loaded = set(await llm.list_loaded())
+            for _ in range(_UNLOAD_CONFIRM_POLLS):
+                if not (set(targets) & still_loaded):
+                    break
+                await asyncio.sleep(_UNLOAD_CONFIRM_INTERVAL_S)
+                still_loaded = set(await llm.list_loaded())
         unloaded = [m for m in targets if m not in still_loaded]
         return {"unloaded": unloaded}
     except LLMBackendError as exc:

@@ -33,6 +33,15 @@ class LLMClient(Protocol):
         params: dict,
     ) -> str: ...
 
+    async def ensure_loaded(self, model: str) -> None:
+        """Best-effort: make ``model`` resident before a generation (T14).
+
+        Called by the pipeline inside the generation slot so a prior ``/v1/models/unload``
+        (or an idle self-unload) can't leave a caller with ``model_unavailable``. Backends
+        whose generation auto-loads may implement this as a no-op.
+        """
+        ...
+
 
 @dataclass
 class RecordedCall:
@@ -76,6 +85,10 @@ class FakeLLMClient:
         response = self._responses[self._index]
         self._index += 1
         return response
+
+    async def ensure_loaded(self, model: str) -> None:
+        """No-op: the fake always "has" its canned responses (T14)."""
+        return None
 
 
 class LLMBackendError(Exception):
@@ -172,6 +185,22 @@ class OllamaClient:
                 {"keys": sorted(data) if isinstance(data, dict) else None},
             )
         return response
+
+    async def ensure_loaded(self, model: str) -> None:
+        """Load ``model`` into VRAM if ``/api/ps`` shows it isn't resident (T14).
+
+        Reload-on-demand: a prior ``/v1/models/unload`` (or an idle keep_alive expiry) can
+        evict the model mid-workload; calling this at the start of a generation reloads it
+        so the caller gets a (slower) success instead of ``503 model_unavailable``. A warm
+        ``/api/generate`` with an empty prompt loads the model without producing tokens; it
+        uses the full generation timeout since a cold load can take tens of seconds. Errors
+        propagate as :class:`LLMBackendError` (Ollama genuinely down), which the pipeline
+        still maps to ``503 model_unavailable`` — the honest signal for a real outage.
+        """
+        if model in await self.list_loaded():
+            return
+        body = {"model": model, "prompt": "", "stream": False, "keep_alive": self._keep_alive}
+        await self._post_json("/api/generate", body, self._timeout_s)
 
     async def list_tags(self) -> set[str]:
         """Model tags Ollama has pulled (``/api/tags``) — used by the startup check."""
