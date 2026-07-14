@@ -22,7 +22,9 @@ from tts.pipeline import run_transform
 from tts.transforms.cast_canonicalize import build_cast_canonicalize
 from tts.transforms.cast_mentions import build_cast_mentions
 from tts.transforms.echo import build_echo
+from tts.transforms.illustration_prompt import build_illustration_prompt
 from tts.transforms.image_prompt import build_image_prompt
+from tts.transforms.scene_update import build_scene_update
 
 pytestmark = pytest.mark.gpu
 
@@ -162,7 +164,9 @@ async def test_cast_mentions_all_book_fixtures_schema_valid_and_printed(client, 
     transform = build_cast_mentions()
     assert transform.model == CAST_MODEL
 
-    fixtures = sorted(_BOOK_FIXTURES.glob("*.txt"))
+    # The T5 per-case excerpts are the numbered files (01–04); the T6 page_*.txt fixtures
+    # (consecutive pages for scene-update) live alongside them and are excluded here.
+    fixtures = sorted(_BOOK_FIXTURES.glob("0*.txt"))
     assert len(fixtures) == 4, f"expected 4 excerpts, found {[f.name for f in fixtures]}"
 
     lines: list[str] = []
@@ -241,3 +245,100 @@ async def test_cast_canonicalize_fixture_schema_valid_and_printed(client, capsys
         print(f"visual_description: {output['visual_description']}")
         print(f"tags: {output['tags']}")
         print("=== end cast-canonicalize output ===\n")
+
+
+# --- T6: scene-update (sequential threading) + illustration-prompt (qwen3.5:9b) -----------
+
+_LEDGER_FIELDS = {
+    "location",
+    "time_of_day",
+    "atmosphere",
+    "present",
+    "scene_changed",
+    "visual_salience",
+    "best_visual_beat",
+    "carry_notes",
+}
+
+
+async def test_scene_update_threading_then_illustration_prompt(client, capsys):
+    """The T6 end-to-end GPU flow on qwen3.5:9b.
+
+    Thread 3 *consecutive* Time Machine pages through scene-update, feeding each returned
+    ledger into the next call's ``prior_ledger`` (the DESIGN §7.4 strictly-in-order pattern).
+    Assert every ledger is schema-valid (the pipeline enforces the §7.4 schema + the
+    best_visual_beat validator, so a returned result IS that assertion), with a non-empty
+    location and visual_salience in [0,1]. Then run illustration-prompt on the highest-salience
+    page using the T5 canonical Time Traveller entry: assert schema + hard validators pass (no
+    raise) and that the soft ``depicted ⊆ cast`` check is recorded, not fatal (200; warnings
+    may be present or empty). Everything is printed for the human eyeball CYCLE-LOG paste
+    (location carries across the non-moving smoking-room pages; beats are concrete).
+    """
+    scene = build_scene_update()
+    assert scene.model == CAST_MODEL
+
+    start = json.loads((_BOOK_FIXTURES / "scene_start.json").read_text(encoding="utf-8"))
+    pages = ["page_a.txt", "page_b.txt", "page_c.txt"]
+
+    ledgers: list[dict] = []
+    lines: list[str] = []
+    prior = start["prior_ledger"]  # None on page 1
+    for i, name in enumerate(pages):
+        text = (_BOOK_FIXTURES / name).read_text(encoding="utf-8")
+        options = {
+            "prior_ledger": prior,
+            "cast_names": start["cast_names"],
+            "era": start["era"],
+        }
+        result = await run_transform(scene, text, options, client, asyncio.Semaphore(1), 120.0)
+        output, meta = result["output"], result["meta"]
+
+        # Shape/mechanics only — schema + validator already passed inside the pipeline.
+        assert set(output) == _LEDGER_FIELDS
+        assert meta["model"] == CAST_MODEL
+        assert isinstance(output["location"], str) and output["location"].strip()
+        assert 0.0 <= output["visual_salience"] <= 1.0
+
+        ledgers.append(output)
+        prior = output  # thread this ledger into the next page's prior_ledger
+        tag = "cold" if i == 0 else "warm"
+        lines.append(
+            f"[{name}] latency_ms={meta['latency_ms']} ({tag}) attempts={meta['attempts']}\n"
+            f"  {json.dumps(output, ensure_ascii=False)}"
+        )
+
+    # Highest-salience page -> illustration-prompt with the T5 canonical cast entry.
+    best_idx = max(range(len(ledgers)), key=lambda i: ledgers[i]["visual_salience"])
+    best_page = pages[best_idx]
+    best_ledger = ledgers[best_idx]
+    cast = json.loads((_BOOK_FIXTURES / "illustration_cast.json").read_text(encoding="utf-8"))
+
+    illus = build_illustration_prompt()
+    assert illus.model == CAST_MODEL
+    ip_options = {"ledger": best_ledger, "cast": cast, "era": start["era"]}
+    ip_result = await run_transform(
+        illus,
+        (_BOOK_FIXTURES / best_page).read_text(encoding="utf-8"),
+        ip_options,
+        client,
+        asyncio.Semaphore(1),
+        120.0,
+    )
+    ip_out, ip_meta = ip_result["output"], ip_result["meta"]
+
+    # Schema + hard validators (word_range, banned_substrings) already passed inside the
+    # pipeline; the soft depicted-subset check is non-fatal (this call returned 200).
+    assert {"prompt", "depicted", "shot"} <= set(ip_out)
+    assert ip_meta["model"] == CAST_MODEL
+
+    with capsys.disabled():
+        print("\n\n=== T6 scene-update sequential ledgers (qwen3.5:9b) ===")
+        for line in lines:
+            print(line)
+        print(f"=== T6 illustration-prompt on max-salience page [{best_page}] ===")
+        print(f"latency_ms={ip_meta['latency_ms']} attempts={ip_meta['attempts']} "
+              f"warnings={ip_meta.get('warnings')}")
+        print(f"prompt: {ip_out['prompt']}")
+        print(f"depicted: {ip_out['depicted']}  shot: {ip_out['shot']}  "
+              f"avoid: {ip_out.get('avoid')}")
+        print("=== end T6 outputs ===\n")

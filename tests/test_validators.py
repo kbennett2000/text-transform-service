@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tts.validators import (
     banned_substrings,
+    depicted_subset_of_cast,
     max_chars,
     min_chars,
     no_empty_strings,
@@ -57,6 +58,28 @@ def test_word_range():
     assert v({"prompt": "two words"}) is None
     assert "outside range" in v({"prompt": "only"})
     assert "outside range" in v({"prompt": "one two three four five"})
+
+
+def test_depicted_subset_of_cast():
+    # The T6 soft validator (DESIGN §7.5): output.depicted must be a subset of the caller's
+    # options.cast names, else a `warn:` finding (recorded, never fatal). Options-aware, so
+    # it opts in via `wants_options` and is called as v(output, options).
+    v = depicted_subset_of_cast()
+    assert v.wants_options is True
+    options = {"cast": [{"name": "the Time Traveller"}, {"name": "Weena"}]}
+    # subset -> no finding
+    assert v({"depicted": ["the Time Traveller"]}, options) is None
+    # empty depicted is a subset of anything -> no finding
+    assert v({"depicted": []}, options) is None
+    assert v({}, options) is None
+    # a name not in the cast -> a soft warning
+    reason = v({"depicted": ["the Morlock"]}, options)
+    assert reason is not None
+    assert reason.startswith("warn:")
+    assert "the Morlock" in reason
+    # empty/absent cast -> any named depiction warns
+    assert v({"depicted": ["anyone"]}, {"cast": []}).startswith("warn:")
+    assert v({"depicted": ["anyone"]}, {}).startswith("warn:")
 
 
 def test_validators_ignore_absent_or_wrong_type_fields():
