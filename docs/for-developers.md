@@ -8,8 +8,9 @@ A small, self-hosted HTTP service exposing named **text → transform → JSON**
 LLM inference (Ollama) with **constrained decoding**. LAN-only, credential-free by default, single-GPU.
 It is **not** a general LLM gateway.
 
-Consumers: **Brickfeed News** (`image-prompt`, `story-cover`) and the **Scriptorium** bakery
-(`cast-mentions`, `cast-canonicalize`, `scene-update`, `illustration-prompt`).
+Consumers: **Brickfeed News** (`image-prompt`, `story-cover`, `opinion-gate`,
+`opinion-image-brief`) and the **Scriptorium** bakery (`cast-mentions`, `cast-canonicalize`,
+`scene-update`, `illustration-prompt`).
 
 See [`text-transform-service-DESIGN.md`](../text-transform-service-DESIGN.md) for the full design and
 [`text-transform-service-BUILD-PLAN.md`](../text-transform-service-BUILD-PLAN.md) for the cycle-by-cycle
@@ -127,6 +128,35 @@ missing/wrong), `404 unknown_transform`, `413 over_budget`, `422 validation_fail
     -H 'content-type: application/json' \
     -d '{"text": "Source article title: City council approves new bike lane network downtown\nPublisher: Metro Herald\nSource URL: https://example.com/bike-lanes"}' | jq
   # {"output": {"headline": "...", "description": "...", "imagePrompt": "...", "category": "BUSINESS", "caption": "..."}, "meta": {...}}
+  ```
+
+- **`opinion-gate`** (production; Brickfeed request §2, T10) — an **editorial safety gate**. Send a
+  JSON array of candidate stories `[{id, title, summary}]`; get back one `verdict` per story
+  (`eligible` / `excluded` / `uncertain`) with a short `reason`, deciding whether each is safe to
+  treat as gentle satire. Admitted under **ADR-0007** (a safety classifier, otherwise excluded by
+  §1). **The service is fail-loud and the caller must fail-closed:** treat every 4xx/5xx, every
+  `uncertain` verdict, and any missing/duplicate `id` as *exclude*. `verdict` is the sole decision
+  field. Budget is **`reject`**: a candidate list over 1600 est-tokens returns `413 over_budget`
+  (never silently drop candidates). Bound to `qwen3.5:9b`. `options` is `{}`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/opinion-gate \
+    -H 'content-type: application/json' \
+    -d '{"text": "[{\"id\":\"a1\",\"title\":\"Town pumpkin smashes record\",\"summary\":\"A 2,300-pound pumpkin took the fair title.\"},{\"id\":\"b2\",\"title\":\"Fatal crash closes interstate\",\"summary\":\"Several died in a pileup.\"}]"}' | jq
+  # {"output": {"verdicts": [{"id": "a1", "verdict": "eligible", "reason": "..."}, {"id": "b2", "verdict": "excluded", "reason": "..."}]}, "meta": {...}}
+  ```
+
+- **`opinion-image-brief`** (production; Brickfeed request §4, T10) — send a finished opinion piece
+  (title + body) plus subject context; get back a subject-only `imagePrompt` (30–400, 8–60 words)
+  and one-line `caption` (15–160) illustrating the piece's **subject** — never the author or the act
+  of writing. Style (incl. toy-brick) stays caller-side (ADR-0004). Input over the 3000 est-token
+  budget is truncated (`head`, keeping the leading piece). Bound to `qwen3.5:9b`. `options` is `{}`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/opinion-image-brief \
+    -H 'content-type: application/json' \
+    -d '{"text": "Title: The Tyranny of the Two-Wheeled Elite\n\nIt has come to my attention that our council...\n\nSubject context:\nARTICLE 1: Downtown gains protected bike lanes."}' | jq
+  # {"output": {"imagePrompt": "...", "caption": "..."}, "meta": {...}}
   ```
 
 - **`cast-mentions`** (production; DESIGN §7.2) — Scriptorium P1. Send one book page; get back the

@@ -17,6 +17,8 @@ from tts.transforms.cast_mentions import build_cast_mentions
 from tts.transforms.echo import build_echo
 from tts.transforms.illustration_prompt import build_illustration_prompt
 from tts.transforms.image_prompt import build_image_prompt
+from tts.transforms.opinion_gate import build_opinion_gate
+from tts.transforms.opinion_image_brief import build_opinion_image_brief
 from tts.transforms.scene_update import build_scene_update
 from tts.transforms.story_cover import build_story_cover
 
@@ -36,6 +38,8 @@ def register_all(settings: Settings) -> None:
     register(build_scene_update())
     register(build_illustration_prompt())
     register(build_story_cover())
+    register(build_opinion_gate())
+    register(build_opinion_image_brief())
 
     if settings.is_dev:
         register(build_echo())

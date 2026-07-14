@@ -1,0 +1,1 @@
+[{"id":"a1","title":"Town's giant pumpkin smashes state record","summary":"A local grower's 2,300-pound pumpkin took the state fair title."},{"id":"b2","title":"Fatal multi-car crash closes interstate","summary":"Several people died in a pileup during morning fog."}]

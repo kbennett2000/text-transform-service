@@ -1,5 +1,100 @@
 # Cycle Log
 
+## T10 — Brickfeed `opinion-gate` (under ADR-0007) + `opinion-image-brief` (2026-07-14)
+
+Second half of the Brickfeed request pair (`docs/requests/brickfeed-2026-07.md` §2 + §4).
+`opinion-gate` — HELD in T9 as out of the DESIGN §1 charter — is now **admitted under
+ADR-0007** and shipped; `opinion-image-brief` (always in-charter, ADR-0004) shipped; the four
+requests are formally dispositioned. **`opinion-piece` stays HELD** (long-form voiced
+generation, §1) by product-owner decision — not built, no module, no fixtures.
+
+**ADR-0007 (transcribed, not re-argued).** `docs/adr/0007-safety-classification-exception.md`
+— product-owner ruling: §1's blanket "no safety-relevant classification" becomes a
+*conditional* exclusion. A safety classifier may register iff (1) its verdict is a closed enum
+including an explicit `uncertain` (no free text drives the decision); (2) the module documents
+the caller's fail-closed obligation (every error + every `uncertain` = the safe outcome; TTS
+stays fail-loud, no fallback); (3) scope is editorial gating of machine-selected public content
+with human audit — not user-generated moderation. `opinion-gate` satisfies all three.
+
+**Shipped** — two new production transforms (net-new; module docstrings + this entry are the
+binding contracts).
+- `src/tts/transforms/opinion_gate.py` — `build_opinion_gate()` [`opinion-gate`, v0.1.0,
+  `qwen3.5:9b`]. Input: JSON array `[{id,title,summary}]`; output: `verdicts[]` of
+  `{id, verdict∈{eligible,excluded,uncertain}, reason(1–200)}`, `maxItems:100`. `options_schema`
+  `{}`; `input_budget=1600`, **`over_budget=reject`→413**; temp 0.0, num_predict 1024.
+  Validators: `no_empty_strings("verdicts[].id")`, `no_empty_strings("verdicts[].reason")`.
+  Docstring carries the caller fail-closed obligation verbatim (ADR-0007 condition 2).
+- `src/tts/transforms/opinion_image_brief.py` — `build_opinion_image_brief()`
+  [`opinion-image-brief`, v0.1.0, `qwen3.5:9b`]. Output: `{imagePrompt(30–400),
+  caption(15–160)}`, subject-only. `options_schema` `{}`; `input_budget=3000`,
+  `over_budget=truncate`/`head`; temp 0.4, num_predict 256. Reuses T9's subject-neutral
+  validator set (`banned_substrings` + `word_range("imagePrompt", 8, 60)`); template forbids
+  style/medium words **and** depicting the author / the act of writing.
+- `docs/requests/brickfeed-2026-07-RESPONSE.md` — disposition of all four requests (the contract
+  the Brickfeed provider cycle reads): tasks 1/2/4 routable, task 3 held; the opinion-gate
+  fail-closed contract is stated caller-facing there.
+- `tests/fixtures/opinion_gate/` — 5 JSON-array batches (`01_mixed`/`02_mixed` = request Ex-A/B;
+  `03_tragedy` all death/disaster; `04_lighthearted` all harmless; `05_ambiguous` one borderline).
+- `tests/fixtures/opinion_image_brief/` — 5 synthetic finished-piece + subject-context inputs
+  (bike-lanes columnist + ladder letter = request Ex-A/B; pumpkin/star/marathon). Inputs only —
+  `opinion-piece` is NOT built; bodies are short hand-written stand-ins.
+- `tests/test_opinion_gate.py` (+7 FakeLLM): binding/shape (enum includes `uncertain`,
+  `over_budget=reject`); happy-path mixed verdicts; **`uncertain` accepted**; over-budget →413
+  with `fake.calls == []`; out-of-enum verdict →422; reason >200 →422; whitespace-only reason
+  →422 (`no_empty_strings` catch).
+- `tests/test_opinion_image_brief.py` (+5 FakeLLM): binding/shape; happy-path (2 keys);
+  imagePrompt banned-substring →422; >60-word →422; caption below `minLength 15` →422.
+- `tests/test_gpu.py` — `# --- T10 ---` section (both transforms, all fixtures, `qwen3.5:9b`);
+  gate asserts schema/enum + **id-set equality** (one verdict per id) + safe-set membership
+  {excluded,uncertain} on the tragedy + ambiguous fixtures (never a single verdict);
+  image-brief asserts shape only. **Authorized stability fix:** T5's flaky
+  `cast_canonicalize` sentence-count assertion loosened from `2 ≤ n ≤ 4` to `≥ 1` (per NOTES).
+
+**Reconciled contracts vs. requested** (recorded in the module docstrings):
+- *opinion-gate:* (1) verdict enum gains a third value `uncertain` (ADR-0007 cond. 1) — TTS
+  emits it honestly, the caller maps `uncertain`/errors/missing-ids → exclude; (2) `verdict`
+  gets `"type":"string"` alongside `enum`; (3) `verdicts` `maxItems:100`, `reason` `minLength:1`
+  (T9 NOTES); (4) `over_budget=reject` kept from the request.
+- *opinion-image-brief:* (1) subject-neutral (ADR-0004) — comedic scene fine, no style/medium
+  words, and depict the subject not the author; (2) `imagePrompt` bound `word_range(8,60)`.
+
+**Verification**
+- `make lint` clean (no `# noqa`).
+- `make test` → **139 passed** (127 prior + 12 new), 10 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama 0.30.7, `qwen3.5:9b`) → **10 passed** (full suite green;
+  the loosened T5 test passed). Outputs below.
+
+**GPU outputs — opinion-gate verdict table (`qwen3.5:9b`; verdict sanity, all `attempts=1`):**
+```
+[01_mixed]        a1=eligible (harmless giant-pumpkin achievement); b2=excluded (centers fatal casualties/death)
+[02_mixed]        c3=eligible (mayor napping, harmless); d4=excluded (centers storm victims/disaster relief)
+[03_tragedy]      t1=excluded (deadly wildfire, multiple deaths); t2=excluded (explosion, employee fatalities); t3=excluded (ferry capsize, drownings)
+[04_lighthearted] h1=eligible (cat plaque); h2=eligible (record baguette); h3=eligible (ducklings crossing)
+[05_ambiguous]    m1=excluded (death/passing of a beloved animal — tragic, not lighthearted)
+```
+Every death/disaster story excluded; every harmless story eligible; the borderline elephant-death
+landed `excluded` (in the safe set). No id dropped or duplicated. `uncertain` did not surface
+naturally here (the model was confident on these fixtures), but the enum accepts it and the unit
+suite proves it is honored — the caller treats it as exclude regardless.
+
+**GPU outputs — opinion-image-brief on `qwen3.5:9b` (subject-only, depicts subject not author):**
+```
+[01_bike_lanes]   imagePrompt: A wide downtown street where fresh green painted lanes form a connected grid for cyclists, while pedestrians are pushed to the narrow margins of the road as riders glide past with smug expressions.
+                  caption: Protected bike lanes push pedestrians aside in favor of gleaming two-wheeled cruisers.
+[02_ladder_letter] imagePrompt: A cluttered suburban porch where a neighbor returns a wooden ladder missing its bottom rung to an expectant homeowner who stands beside the gap.
+                  caption: The borrowed ladder arrives back one step shorter than it left.
+[03_pumpkin]      imagePrompt: A massive two-thousand-pound pumpkin with a bloated surface sits on a flatbed trailer in an outdoor fairground setting.
+                  caption: Sheer size is mistaken for character as the giant gourd arrives at the fair.
+[04_star]         imagePrompt: A distant star rotates at an impossibly rapid pace in deep space, blurring its surface into a dizzying whirl while astronomers observe from Earth with instruments.
+                  caption: An unusually fast-spinning distant star whirs giddily through the cosmos.
+[05_marathon]     imagePrompt: Thousands of runners wearing numbered bibs finish a marathon in intense summer heat along a crowded downtown street lined with cheering spectators.
+                  caption: Runners complete the city annual marathon under record-breaking summer temperatures.
+```
+Subject-only — scenes depict the story subject (lanes, ladder, pumpkin, star, runners), never the
+columnist or the act of writing; no style/medium/camera words leaked.
+
+**Template change:** two new transforms, both v0.1.0.
+
 ## T9 — Brickfeed `story-cover` · `opinion-gate` HELD out of charter (2026-07-13)
 
 First of the Brickfeed-requested transforms (`docs/requests/brickfeed-2026-07.md`, provenance
