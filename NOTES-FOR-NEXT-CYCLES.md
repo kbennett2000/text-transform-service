@@ -2,6 +2,35 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
+## From T7 — for later cycles / the human deploy
+- **TTS is feature-complete for M1, pending the human systemd deploy.** All transforms + all ops pieces
+  (listing, auth, logging, systemd unit) shipped. The one open acceptance box is the human running the
+  install on the 5070 (`deploy/README.md`): rsync → `uv sync` → optional `.env` → `systemctl enable
+  --now` → confirm `/health` ok and survives reboot. **T8 (Brickfeed bench) stays DEFERRED** — build only
+  when explicitly dispatched.
+- **§9 systemd-vs-config tension (documented, not "fixed").** The committed unit's `ExecStart` hardcodes
+  `--host 0.0.0.0 --port 8712` and does **not** read `TTS_HOST`/`TTS_PORT`; those env vars only affect
+  `make dev`. Left verbatim by design (DESIGN §9). If a future cycle wants env-driven bind under systemd,
+  switch `ExecStart` to a wrapper that reads the env (e.g. `sh -c 'exec .venv/bin/uvicorn … --port
+  ${TTS_PORT:-8712}'`) and bump the deploy docs — but that's a deliberate deviation, not a silent change.
+- **Auth is a single dependency (`require_api_key` in `app.py`), attached per-route** via
+  `dependencies=[Depends(require_api_key)]` on the three `/v1/*` routes — **not** a global app-level
+  dependency (that would gate `/health`). Any new `/v1/*` route must add the dependency explicitly, or it
+  ships unauthenticated. `/health` stays deliberately bare.
+- **`TransformError` now has a global exception handler** (`_on_transform_error`) for dependency-raised
+  errors, **and** the transform route keeps its inline `try/except`. Both are intentional: the inline
+  catch orders `except TransformError` before `except Exception` so a real bug still maps to 500. Don't
+  remove the inline catch expecting the global handler to cover it — the broad `except Exception` would
+  otherwise swallow `TransformError` into a 500.
+- **Structured access log = `/v1/*` only** (user-confirmed). `log_requests` middleware in `app.py`; the
+  route hands fields to the middleware via `request.state` (`transform_name`, `log_meta`, `error_code`).
+  `/health` is excluded from the JSON line but every response still gets `X-Request-Id`. To log a new
+  route, ensure its path is under `/v1/` (or widen the middleware's prefix check).
+- **`configure_logging` (`logging_setup.py`) is idempotent** (marker attributes on handlers) and sets
+  `tts.request` to `propagate=False` so the JSON line is pure. Consequence for tests: pytest `caplog`
+  won't capture `tts.request` (no propagation) — attach your own handler to the `tts.request` logger
+  instead (see `tests/test_logging.py`'s `_Capture`).
+
 ## From T6 — for later cycles
 - **The Scriptorium bake surface is COMPLETE.** With scene-update (P3) + illustration-prompt (P5) the
   service now exposes every transform the bake needs (P1 cast-mentions, P2 cast-canonicalize, P3, P5).
@@ -108,5 +137,8 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
   in the repo root. Left as-is (not created by this cycle). Consider removing it once the v2
   `text-transform-service-DESIGN.md` is confirmed canonical.
 - `tts/app.py` resolves `Settings` once at import. Tests override via `app.state.settings`.
-  When auth/logging land (T7), consider a lifespan-based settings/state wiring.
+  Auth/logging landed in T7 **without** moving to lifespan wiring — `require_api_key` and the
+  `log_requests` middleware both read `app.state.settings` (via `_settings()`) at request time, and
+  tests still patch `app.state.settings`. `configure_logging` runs once at import off the resolved
+  settings. A lifespan-based rewire remains optional, not required.
 - Starlette TestClient emits a `StarletteDeprecationWarning` about httpx; harmless, no action.
