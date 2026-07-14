@@ -7,7 +7,7 @@
 **Identity.** Self-hosted FastAPI service. Named transforms map `text (+options) → schema-constrained
 JSON` via a local LLM (Ollama, `/api/generate`, constrained decoding). LAN-only, keyless by default,
 single-GPU (RTX 5070), port **8712**. **Not** a general LLM gateway. Consumers: Brickfeed News
-(`image-prompt`) and Scriptorium bakery (`cast-*`, `scene-update`, `illustration-prompt`).
+(`image-prompt`, `story-cover`) and Scriptorium bakery (`cast-*`, `scene-update`, `illustration-prompt`).
 
 **Invariants (violating any is a bug).**
 - Error codes (below) are a **frozen contract** with two consumers — changing a code is breaking.
@@ -59,10 +59,17 @@ queued_ms` (+ `warnings:[...]` **only when** a soft validator fired; absent on c
 | `cast-canonicalize` | Scriptorium P2 §7.3 | `qwen3.5:9b` | 1200 | truncate | `""` (empty) | `{name, descriptors, aliases?, era?, genre?}` (name+descriptors required) | `visual_description, one_line, tags` |
 | `scene-update` | Scriptorium P3 §7.4 | `qwen3.5:9b` | 1600 | **reject** → 413 | one page (call **in order**) | `{prior_ledger: obj\|null, cast_names[], era?}` (thread each output ledger → next `prior_ledger`) | `location, time_of_day, atmosphere, present, scene_changed, visual_salience, best_visual_beat, carry_notes` |
 | `illustration-prompt` | Scriptorium P5 §7.5 | `qwen3.5:9b` | 1600 | **reject** → 413 | selected page | `{ledger: obj, cast:[{name, one_line}], era?}` | `prompt, depicted, shot(enum), avoid?` — `depicted⊆cast` is a **soft** validator → `meta.warnings` |
+| `story-cover` | Brickfeed (request §1, T9) | `qwen3.5:9b` | 1200 | truncate (no-op on single-paragraph input; never rejects) | source context (title/publisher/URL) | `{}` | `headline(10–200), description(40–600), imagePrompt(30–400, 8–60w, subject-only), category(enum×8), caption(15–160)` |
 | `echo` | dev-only (`TTS_ENV=dev`) | `qwen3.5:2b` | — | — | any | `{}` | `echo` (first sentence) — plumbing check, not a workload |
 
-Style/medium/camera words are always caller-side; their appearance in an `image-prompt`/`illustration-prompt`
-output is drift → `422`.
+Style/medium/camera words are always caller-side; their appearance in an `image-prompt` /
+`illustration-prompt` / `story-cover` `imagePrompt` output is drift → `422`. Brickfeed's toy-brick
+styling is applied caller-side, never in a transform (ADR-0004).
+
+**Held (not registered):** `opinion-gate` (Brickfeed request §2) is a fail-closed, safety-load-bearing
+topic gate — "safety-relevant classification", which DESIGN §1 excludes. Held as of T9 pending a
+product-owner charter call; the incumbent Claude gate stays live. `opinion-piece` +
+`opinion-image-brief` are T10 (`opinion-piece` needs its own §1 long-form-voiced charter check first).
 
 ## Config (env, all optional)
 

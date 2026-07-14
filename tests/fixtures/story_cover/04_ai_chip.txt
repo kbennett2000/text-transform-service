@@ -1,0 +1,3 @@
+Source article title: Startup unveils energy-sipping chip for on-device language models
+Publisher: Circuit Daily
+Source URL: https://example.com/edge-ai-chip

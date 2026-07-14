@@ -18,6 +18,7 @@ from tts.transforms.echo import build_echo
 from tts.transforms.illustration_prompt import build_illustration_prompt
 from tts.transforms.image_prompt import build_image_prompt
 from tts.transforms.scene_update import build_scene_update
+from tts.transforms.story_cover import build_story_cover
 
 
 def register_all(settings: Settings) -> None:
@@ -34,6 +35,7 @@ def register_all(settings: Settings) -> None:
     register(build_cast_canonicalize())
     register(build_scene_update())
     register(build_illustration_prompt())
+    register(build_story_cover())
 
     if settings.is_dev:
         register(build_echo())

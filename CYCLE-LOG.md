@@ -1,5 +1,89 @@
 # Cycle Log
 
+## T9 — Brickfeed `story-cover` · `opinion-gate` HELD out of charter (2026-07-13)
+
+First of the Brickfeed-requested transforms (`docs/requests/brickfeed-2026-07.md`, provenance
+`brickfeed@40acb90`, copied into this repo pre-dispatch). Dispatched as a pair
+(`story-cover` + `opinion-gate`); **`opinion-gate` was held** during plan review and only
+`story-cover` shipped.
+
+**Decision — `opinion-gate` HELD, escalated to product owner (not built).** The request
+frames it as a **fail-closed, safety-load-bearing** topic gate: *exclude anything centering
+tragedy, violence, death, disaster casualties, or victims; if uncertain, exclude.* That is
+squarely "safety-relevant classification", which DESIGN §1 (line 9) and system-overview §5
+declare the service is **not** for. Building it would silently amend the §1 charter — which
+CLAUDE.md forbids without a product-owner ADR. Per the plan-mode decision, `story-cover` ships
+now and the `opinion-gate` charter call is escalated (see NOTES-FOR-NEXT-CYCLES). The incumbent
+Claude gate stays live meanwhile. No `opinion_gate.py` module was created.
+
+**Shipped** — one new production transform, net-new (no DESIGN §7.x section; the module
+docstring + this entry are its binding contract).
+- `src/tts/transforms/story_cover.py` — `build_story_cover()` [`story-cover`, v0.1.0,
+  `qwen3.5:9b`]. Five-field cover bundle: `headline` (10–200), `description` (40–600),
+  `imagePrompt` (30–400), `category` (fixed 8-value enum), `caption` (15–160). `options_schema`
+  `{}`; `input_budget=1200`, `over_budget=truncate`/`head`; temp 0.4, num_predict 512.
+  Validators mirror `image-prompt`'s subject-neutral set: `banned_substrings` on
+  imagePrompt/headline/caption/description + `word_range("imagePrompt", 8, 60)`.
+- `docs/requests/brickfeed-2026-07.md` — the Brickfeed request doc, imported with a provenance
+  header noting it is the *request*, not the contract.
+- `tests/fixtures/story_cover/` — 5 synthetic 3-line inputs (`01_bike_lanes` BUSINESS +
+  `02_spinning_star` SCIENCE from the request examples; `03_marathon` SPORTS, `04_ai_chip`
+  TECHNOLOGY, `05_festival` CULTURE, new).
+- `tests/test_story_cover.py` (+7 FakeLLM): binding/shape; happy-path (5 keys, not truncated);
+  over-budget single-paragraph **no-op** (truncated stays False); validator-catch 422s for
+  imagePrompt banned-substring and >60-word; schema-reject 422s for short headline and
+  out-of-enum category.
+- `tests/test_gpu.py` — `# --- T9 ---` section: all 5 fixtures through `run_transform` on
+  `qwen3.5:9b`, shape/enum/`truncated is False` assertions, outputs printed for the eyeball.
+
+**Reconciled contract vs. requested** (deviations recorded in the module docstring):
+1. `category` gets `"type": "string"` alongside its `enum` (house style; request had `enum` only).
+2. `imagePrompt`/`caption` held **subject-neutral** (ADR-0004). The request's example outputs
+   and preamble ask for style/mood ("cartoon", "jubilant", "playful/cartoonish"); style
+   (incl. Brickfeed's toy-brick treatment) is caller-side, never baked in. Template forbids
+   style/medium/artist/camera words (and "cartoon"/"photo"); validators enforce shape. The
+   request's own subject rules (no text/logos/brands in the scene) are preserved.
+3. `imagePrompt` word bound is `word_range(8, 60)` (house `image-prompt` binding), not the
+   request preamble's looser "~15–30 words"; template guides "~15–40 words".
+4. Truncation is a structural **no-op** for the single-paragraph story-cover input — `head`
+   cuts only on blank-line paragraph boundaries (`budget.py`), so an over-budget input passes
+   through unchanged and is never rejected. This matches the request's "truncating the tail of
+   a long title is harmless" intent.
+
+**Verification**
+- `make lint` clean (no `# noqa`; template lines kept ≤100 chars).
+- `make test` → **127 passed** (120 prior + 7 new), 8 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama 0.30.7, `qwen3.5:9b`) → **8 passed** (full suite green;
+  one earlier run flaked on the pre-existing T5 `cast_canonicalize` sentence-count assertion,
+  which passed on isolated re-run and again in the full green run — flakiness noted in NOTES).
+
+**GPU outputs — story-cover on `qwen3.5:9b` (human eyeball; subject-neutral, no style leak):**
+- `[01_bike_lanes]` category=POLITICS (1903ms, cold) — headline "City council approves new
+  downtown bike lane network"; imagePrompt "A wide paved street with freshly painted green
+  lanes running alongside parked cars, under an overcast sky with pedestrians walking on
+  sidewalks near modern office buildings".
+- `[02_spinning_star]` category=SCIENCE (1986ms) — imagePrompt "A bright glowing sphere
+  spinning rapidly in the vast dark void of space with distant faint background stars visible
+  around it".
+- `[03_marathon]` category=SPORTS (2001ms) — imagePrompt "An athletic woman wearing running
+  gear crosses the finish line of an urban street course while holding up her arms in
+  celebration with spectators visible nearby".
+- `[04_ai_chip]` category=TECHNOLOGY (1899ms) — imagePrompt "Close-up view of an advanced
+  computer processor chip with glowing blue circuitry patterns on its surface".
+- `[05_festival]` category=CULTURE (1945ms) — imagePrompt "Thousands of colorful paper lanterns
+  float on calm water near a wide city riverbank where people stand watching under soft evening
+  light with reflections shimmering below".
+- All `attempts=1`, `truncated=False`. Category is model judgment on a valid enum (01 chose
+  POLITICS where the request example said BUSINESS — both defensible; wording never asserted).
+
+**Template change:** new template, ships at `version 0.1.0`.
+
+**Deviations / decisions**
+- `opinion-gate` HELD out of §1 charter (safety-relevant classification), escalated — see above.
+- Model binding `qwen3.5:9b` (the standing T3 rebind for every production transform).
+- The four reconciliations above (category type, subject-neutral imagery, word bound,
+  truncation no-op) are the binding `story-cover` contract; the request doc is not.
+
 ## T7 — Ops hardening: listing · auth · logging · systemd · README (2026-07-13)
 
 **Deploy — T7 human box CLOSED (2026-07-13).** Installed under systemd on the 5070 (host G434) per

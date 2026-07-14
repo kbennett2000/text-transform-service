@@ -8,7 +8,7 @@ A small, self-hosted HTTP service exposing named **text → transform → JSON**
 LLM inference (Ollama) with **constrained decoding**. LAN-only, credential-free by default, single-GPU.
 It is **not** a general LLM gateway.
 
-Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
+Consumers: **Brickfeed News** (`image-prompt`, `story-cover`) and the **Scriptorium** bakery
 (`cast-mentions`, `cast-canonicalize`, `scene-update`, `illustration-prompt`).
 
 See [`text-transform-service-DESIGN.md`](../text-transform-service-DESIGN.md) for the full design and
@@ -112,6 +112,21 @@ missing/wrong), `404 unknown_transform`, `413 over_budget`, `422 validation_fail
     -H 'content-type: application/json' \
     -d '{"text": "MERIDAN — A magnitude 6.4 earthquake toppled the town clock tower..."}' | jq
   # {"output": {"prompt": "A fallen brick clock tower lies shattered on a cold town square at dawn..."}, "meta": {...}}
+  ```
+
+- **`story-cover`** (production; Brickfeed request §1, T9) — Brickfeed's story cover bundle. Send a
+  story's source context (title/publisher/URL); get back five fields: an original `headline`
+  (10–200), a neutral `description` (40–600), a subject-only `imagePrompt` (30–400, 8–60 words, no
+  style/medium words), a `category` (one of the fixed 8-value enum), and a one-line `caption`
+  (15–160). Style — including Brickfeed's toy-brick treatment — is applied caller-side, never baked
+  in (ADR-0004). Bound to `qwen3.5:9b`. `options` is `{}`. Budget is `truncate`, but the
+  single-paragraph input means truncation is a no-op (long titles pass through; nothing is rejected).
+
+  ```bash
+  curl -s localhost:8712/v1/transform/story-cover \
+    -H 'content-type: application/json' \
+    -d '{"text": "Source article title: City council approves new bike lane network downtown\nPublisher: Metro Herald\nSource URL: https://example.com/bike-lanes"}' | jq
+  # {"output": {"headline": "...", "description": "...", "imagePrompt": "...", "category": "BUSINESS", "caption": "..."}, "meta": {...}}
   ```
 
 - **`cast-mentions`** (production; DESIGN §7.2) — Scriptorium P1. Send one book page; get back the

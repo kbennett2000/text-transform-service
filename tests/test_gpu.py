@@ -25,6 +25,7 @@ from tts.transforms.echo import build_echo
 from tts.transforms.illustration_prompt import build_illustration_prompt
 from tts.transforms.image_prompt import build_image_prompt
 from tts.transforms.scene_update import build_scene_update
+from tts.transforms.story_cover import build_story_cover
 
 pytestmark = pytest.mark.gpu
 
@@ -32,6 +33,7 @@ TEST_MODEL = "qwen3.5:2b"
 
 _NEWS_FIXTURES = Path(__file__).parent / "fixtures" / "news"
 _BOOK_FIXTURES = Path(__file__).parent / "fixtures" / "book"
+_STORY_COVER_FIXTURES = Path(__file__).parent / "fixtures" / "story_cover"
 
 
 @pytest.fixture
@@ -342,3 +344,60 @@ async def test_scene_update_threading_then_illustration_prompt(client, capsys):
         print(f"depicted: {ip_out['depicted']}  shot: {ip_out['shot']}  "
               f"avoid: {ip_out.get('avoid')}")
         print("=== end T6 outputs ===\n")
+
+
+# --- T9: story-cover on the real production model (qwen3.5:9b) -----------------------------
+
+STORY_COVER_MODEL = "qwen3.5:9b"
+_CATEGORIES = {
+    "WORLD", "POLITICS", "BUSINESS", "TECHNOLOGY",
+    "SCIENCE", "SPORTS", "CULTURE", "OPINION",
+}
+
+
+async def test_story_cover_all_fixtures_schema_valid_and_printed(client, capsys):
+    """Run all 5 synthetic story-cover fixtures through the real transform on qwen3.5:9b.
+    The pipeline enforces the reconciled five-field schema (incl. the category enum) *and* the
+    subject-neutral validators (banned_substrings + word_range), so a returned result (no
+    TransformError, no 422) IS the schema+validator assertion. We never assert wording; the
+    bundles are printed for the human eyeball paste into CYCLE-LOG (the reconciliation to check
+    is that imagePrompt/caption stay subject-only — no style/medium words, no baked-in
+    toy-brick treatment). First fixture is a cold load; the rest are warm.
+    """
+    transform = build_story_cover()
+    assert transform.model == STORY_COVER_MODEL
+
+    fixtures = sorted(_STORY_COVER_FIXTURES.glob("*.txt"))
+    assert len(fixtures) == 5, f"expected 5 fixtures, found {[f.name for f in fixtures]}"
+
+    lines: list[str] = []
+    for i, path in enumerate(fixtures):
+        text = path.read_text(encoding="utf-8")
+        result = await run_transform(
+            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+        )
+        output, meta = result["output"], result["meta"]
+
+        # Shape/mechanics only — schema + validators already passed inside the pipeline.
+        assert set(output) == {"headline", "description", "imagePrompt", "category", "caption"}
+        assert all(isinstance(output[k], str) and output[k].strip() for k in output)
+        assert output["category"] in _CATEGORIES
+        assert meta["model"] == STORY_COVER_MODEL
+        # Single-paragraph input -> head truncation is a structural no-op (see budget.py).
+        assert meta["truncated"] is False
+
+        tag = "cold" if i == 0 else "warm"
+        lines.append(
+            f"[{path.name}] category={output['category']} "
+            f"latency_ms={meta['latency_ms']} ({tag}) attempts={meta['attempts']}\n"
+            f"  headline: {output['headline']}\n"
+            f"  description: {output['description']}\n"
+            f"  imagePrompt: {output['imagePrompt']}\n"
+            f"  caption: {output['caption']}"
+        )
+
+    with capsys.disabled():
+        print("\n\n=== T9 story-cover GPU outputs (qwen3.5:9b) ===")
+        for line in lines:
+            print(line)
+        print("=== end story-cover outputs ===\n")
