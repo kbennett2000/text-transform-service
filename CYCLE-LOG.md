@@ -1,5 +1,78 @@
 # Cycle Log
 
+## T11 — `opinion-gate` input budget fixed for real batch volumes (2026-07-13)
+
+Mini-cycle. Brickfeed's live verification of `opinion-gate` 413'd (`over_budget`) on a routine
+21-candidate batch (11,976 B vs `input_budget: 1600`). The 0.1.0 contract was sized for single
+stories, but the task is batch-shaped by design (`verdicts` `maxItems: 100`). **Scope: opinion-gate
+only — no other transform, no schema shape changes.** Bumped to **v0.2.0**.
+
+**Shipped**
+- `src/tts/transforms/opinion_gate.py` — `input_budget` **1600 → 8000** est-tokens; `version`
+  **0.1.0 → 0.2.0**; docstring gains a v0.2.0 change note. `over_budget="reject"` **unchanged**
+  (decided): truncating a batch would drop trailing candidates, which the caller's missing-id rule
+  then excludes — quiet starvation of the tail; reject is the honest failure.
+- `tests/fixtures/opinion_gate/06_realistic_batch.txt` — synthetic realistic 21-candidate batch
+  (~12 KB / ~2.5k est-tokens; the shape that 413'd at 1600, now under 8000). Mixed subject matter:
+  15 lighthearted + 6 genuine tragedy/disaster (crash, fire, flood, earthquake, ferry, explosion).
+- `tests/test_opinion_gate.py` — binding asserts updated (`version 0.2.0`, `input_budget 8000`);
+  happy-path `transform_version 0.2.0`; **new** `test_realistic_batch_passes_budget` (21-candidate
+  fixture passes budget, reaches generation, 21 verdicts id-set equal); over-budget 413 test
+  resized 60→100 padded candidates so it still clears the raised 8000 budget (~11.6k est-tokens).
+- `tests/test_gpu.py` — **new** `test_opinion_gate_realistic_batch_at_volume` (full run on
+  `qwen3.5:9b`, schema-valid + id-set equality at 21-candidate volume, prints the verdict table);
+  the curated-5 verdict test now excludes the batch fixture by name (stays exactly 5).
+- `docs/requests/brickfeed-2026-07-RESPONSE.md` §2 — budget updated 1600→8000; added consumer note
+  that batches approaching ~100 candidates or ~8000 est-tokens must be chunked caller-side (TTS
+  413s rather than judge a truncated batch).
+
+**Deviation from the decided fix (approved mid-cycle).** The decided fix was `input_budget` only.
+GPU verification exposed that `num_predict=1024` cannot emit a verdict per candidate for a real
+batch — the output JSON truncated mid-string → **422 after retries** (input fit, output did not).
+The cycle's own acceptance (gpu full run at volume + live 200 on the 21-batch) is unreachable
+without also raising the output ceiling. With product-owner approval, **`num_predict` 1024 → 5120**,
+sized to what the 8000 input budget admits (~66 candidates × ~70 out-tokens). It is a ceiling, not
+a fixed cost — small batches stop at the natural JSON end, so only large batches are affected.
+opinion-gate-only, no schema change; folded into v0.2.0.
+
+**Verification**
+- `make lint` clean.
+- `make test` → **140 passed** (139 prior + 1 new unit test), 11 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama, `qwen3.5:9b`) → **11 passed** (10 prior + 1 new volume
+  test). The 21-candidate batch returned 21/21 verdicts, **id-set equality held**, single attempt,
+  latency ~17.4 s. **No quality drift across the long list**: all 6 tragedy/disaster items excluded,
+  the 15 lighthearted items eligible, coherent all the way to s21. Verdict table:
+
+```
+=== T11 opinion-gate GPU verdict table @ 21-candidate volume (qwen3.5:9b) ===
+latency_ms=17441 attempts=1 n=21
+  s01=eligible (record-breaking pumpkin / community fair)
+  s02=eligible (kids reading to therapy dogs)
+  s03=excluded (fatal interstate pileup, student deaths)
+  s04=eligible (diner 75th anniversary)
+  s05=eligible (amateur astronomer photographs comet)
+  s06=excluded (fatal warehouse fire, two workers killed)
+  s07=eligible (middle-schoolers' recycling robot)
+  s08=eligible (cat elected honorary mayor)
+  s09=excluded (flash flooding, multiple deaths, missing)
+  s10=eligible (retiree knits sweaters for penguins)
+  s11=eligible (marching band national championship)
+  s12=excluded (earthquake levels district, casualties feared)
+  s13=eligible (world-record longest baguette)
+  s14=eligible (community garden / pollinator haven)
+  s15=excluded (ferry capsizes, confirmed fatalities)
+  s16=eligible (town clock finally fixed)
+  s17=eligible (lost dog reunited with family)
+  s18=excluded (chemical plant explosion, worker killed)
+  s19=eligible (grandmother's chili cook-off win)
+  s20=eligible (volunteers plant ten thousand trees)
+  s21=eligible (kids' lemonade stand for children's hospital)
+=== end T11 volume outputs ===
+```
+
+**Deviations:** the `num_predict` bump above (approved). No schema shape changes. No other
+transform touched. README unchanged (it does not surface opinion-gate's version/budget).
+
 ## Ops — redeploy after T10; live registry current, `redeploy.sh` added (2026-07-13)
 
 The deployed `/opt/text-transform-service` was stale (pre-T9/T10): the live registry served only
