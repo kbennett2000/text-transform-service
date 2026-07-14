@@ -37,6 +37,18 @@ reads these, not the request, as the contract):
    list would drop stories from classification (they would be treated as excluded downstream), so
    a loud reject is safer than a partial batch.
 
+v0.2.0 (T11) — ``input_budget`` raised ``1600 → 8000`` est-tokens. The 0.1.0 budget was sized for
+a single story, but this task is batch-shaped by design (``verdicts`` is ``maxItems: 100``);
+Brickfeed's live verification 413'd on a routine 21-candidate batch (~12 KB / ~2k est-tokens).
+``over_budget="reject"`` is deliberately *unchanged*: truncating a batch would drop trailing
+candidates, which the caller's missing-id rule (below) then excludes — quiet starvation of the
+tail. Reject is the honest failure. Callers approaching ~100 candidates or ~8000 est-tokens must
+chunk caller-side (see the RESPONSE doc §2). ``num_predict`` was also raised ``1024 → 5120`` in
+the same cycle: the 1024 output ceiling could not emit a verdict per candidate for a real batch
+(the output JSON truncated mid-string → 422), so it is now sized to what the 8000 input budget
+admits (~66 candidates × ~70 out-tokens). It is a ceiling, not a fixed cost — small batches stop
+at the natural end, so this only lets large batches finish.
+
 id-completeness (one verdict per input id, each echoed exactly once) is not schema-enforceable —
 validators see the output and options, never the raw input text. The caller fail-closed rule
 (missing/duplicate id → exclude) covers the gap; the T10 GPU test checks id-set equality.
@@ -104,12 +116,12 @@ def build_opinion_gate() -> Transform:
     """Construct the ``opinion-gate`` transform (Brickfeed request §2, reconciled in T10)."""
     return Transform(
         name="opinion-gate",
-        version="0.1.0",
+        version="0.2.0",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # production binding; see docs/models.md (T3 rebind)
         temperature=0.0,  # deterministic classification gate
-        num_predict=1024,  # a verdict per candidate story across a batch
-        input_budget=1600,
+        num_predict=5120,  # T11: output ceiling sized to input_budget (~66 candidates × ~70)
+        input_budget=8000,  # T11: batch-shaped task (maxItems 100); 1600 413'd real batches
         over_budget="reject",  # 413; never silently drop candidates (request's own choice)
         options_schema={},
         output_schema=_OUTPUT_SCHEMA,

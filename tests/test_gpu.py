@@ -414,6 +414,8 @@ OPINION_MODEL = "qwen3.5:9b"
 _VERDICTS = {"eligible", "excluded", "uncertain"}
 # excluded and uncertain both map to "exclude" caller-side (ADR-0007) — the safe-outcome set.
 _SAFE_OUTCOME = {"excluded", "uncertain"}
+# The T11 volume fixture is exercised by its own test below, not the curated-5 verdict test.
+_BATCH_FIXTURE = "06_realistic_batch.txt"
 
 
 async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys):
@@ -428,7 +430,9 @@ async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys
     transform = build_opinion_gate()
     assert transform.model == OPINION_MODEL
 
-    fixtures = sorted(_OPINION_GATE_FIXTURES.glob("*.txt"))
+    fixtures = sorted(
+        f for f in _OPINION_GATE_FIXTURES.glob("*.txt") if f.name != _BATCH_FIXTURE
+    )
     assert len(fixtures) == 5, f"expected 5 fixtures, found {[f.name for f in fixtures]}"
 
     lines: list[str] = []
@@ -472,6 +476,41 @@ async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys
         for line in lines:
             print(line)
         print("=== end opinion-gate outputs ===\n")
+
+
+async def test_opinion_gate_realistic_batch_at_volume(client, capsys):
+    """T11: the 21-candidate batch that 413'd Brickfeed at input_budget=1600 now runs whole on
+    qwen3.5:9b under the raised 8000 budget. Asserts the schema (enforced in the pipeline) and,
+    critically, **id-set equality at volume** — 21 in, 21 out, no missing or duplicated ids
+    across a long list (the request's core contract, and where quality tends to drift). The
+    full verdict table is printed for the human eyeball to scan for drift across the batch.
+    """
+    transform = build_opinion_gate()
+    assert transform.input_budget == 8000  # T11 budget; the batch depends on it
+
+    text = (_OPINION_GATE_FIXTURES / _BATCH_FIXTURE).read_text(encoding="utf-8")
+    input_ids = [s["id"] for s in json.loads(text)]
+    assert len(input_ids) == 21
+
+    result = await run_transform(transform, text, {}, client, asyncio.Semaphore(1), 120.0)
+    output, meta = result["output"], result["meta"]
+    verdicts = output["verdicts"]
+
+    assert all(v["verdict"] in _VERDICTS for v in verdicts)
+    assert meta["model"] == OPINION_MODEL
+    out_ids = [v["id"] for v in verdicts]
+    # One verdict per input id, each echoed exactly once — at 21-candidate volume.
+    assert set(out_ids) == set(input_ids) and len(out_ids) == len(input_ids), (
+        f"id mismatch at volume: {len(input_ids)} in vs {len(out_ids)} out; "
+        f"missing={set(input_ids) - set(out_ids)} extra={set(out_ids) - set(input_ids)}"
+    )
+
+    with capsys.disabled():
+        print("\n\n=== T11 opinion-gate GPU verdict table @ 21-candidate volume (qwen3.5:9b) ===")
+        print(f"latency_ms={meta['latency_ms']} attempts={meta['attempts']} n={len(verdicts)}")
+        for v in verdicts:
+            print(f"  {v['id']}={v['verdict']} ({v['reason']})")
+        print("=== end T11 volume outputs ===\n")
 
 
 async def test_opinion_image_brief_all_fixtures_schema_valid_and_printed(client, capsys):

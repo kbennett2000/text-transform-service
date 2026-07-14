@@ -45,9 +45,13 @@ makes that exclusion conditional. The shipped contract:
   `uncertain` **honestly** — the service is fail-loud and never substitutes a default verdict.
 - **`verdict` is the sole decision field.** `reason` (1–200 chars) is explanatory only; do not
   drive any decision from it.
-- **`over_budget=reject` → 413.** A candidate list over `input_budget=1600` is rejected whole,
-  never silently truncated (truncation would drop stories from classification).
+- **`over_budget=reject` → 413.** A candidate list over `input_budget=8000` est-tokens (raised
+  from 1600 in v0.2.0 — the task is batch-shaped, `maxItems:100`) is rejected whole, never
+  silently truncated (truncation would drop trailing stories from classification, which your
+  missing-id rule then excludes — quiet starvation of the tail).
 - **Bounds:** `verdicts` is capped at `maxItems: 100`; `reason` has `minLength: 1`.
+- **Chunk large batches caller-side.** Batches approaching ~100 candidates or ~8000 est-tokens
+  should be chunked caller-side; TTS will 413 rather than judge a truncated batch.
 
 ### ⚠️ Caller fail-closed obligation (REQUIRED — this is the safety contract)
 

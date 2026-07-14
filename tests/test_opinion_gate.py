@@ -51,10 +51,10 @@ _VALID = {
 def test_transform_binding_and_shape():
     t = build_opinion_gate()
     assert t.name == "opinion-gate"
-    assert t.version == "0.1.0"
+    assert t.version == "0.2.0"
     assert t.model == "qwen3.5:9b"
-    assert t.input_budget == 1600
-    assert t.over_budget == "reject"
+    assert t.input_budget == 8000  # T11: raised from 1600 for real batch volumes
+    assert t.over_budget == "reject"  # T11: unchanged — never truncate a batch
     assert t.options_schema == {}
     # ADR-0007 condition 1: the verdict enum is closed and includes an explicit `uncertain`.
     verdict_enum = t.output_schema["properties"]["verdicts"]["items"]["properties"]["verdict"][
@@ -70,7 +70,7 @@ async def test_happy_path_mixed_verdicts():
     assert {v["id"] for v in verdicts} == {"a1", "b2"}
     assert all(v["verdict"] in _VERDICTS for v in verdicts)
     assert result["meta"]["transform"] == "opinion-gate"
-    assert result["meta"]["transform_version"] == "0.1.0"
+    assert result["meta"]["transform_version"] == "0.2.0"
     assert result["meta"]["model"] == "qwen3.5:9b"
     assert result["meta"]["attempts"] == 1
 
@@ -90,11 +90,34 @@ async def test_uncertain_verdict_is_accepted():
     assert verdicts["a1"] == "uncertain"
 
 
+async def test_realistic_batch_passes_budget():
+    # T11 regression: the 21-candidate batch shape that 413'd Brickfeed at input_budget=1600
+    # (~2.5k est-tokens) must now pass under the raised 8000 budget and reach generation. We
+    # feed a FakeLLM one valid verdict per input id (shape only) and assert the pipeline
+    # returns all 21 with id-set equality — proving the batch fit the budget, not the verdicts.
+    text = _fixture("06_realistic_batch.txt")
+    ids = [s["id"] for s in json.loads(text)]
+    assert len(ids) == 21
+    payload = {
+        "verdicts": [
+            {"id": sid, "verdict": "eligible", "reason": "Shape-only fake verdict."}
+            for sid in ids
+        ]
+    }
+    fake = FakeLLMClient([json.dumps(payload)])
+    result = await _run(fake, text)
+    verdicts = result["output"]["verdicts"]
+    assert {v["id"] for v in verdicts} == set(ids)
+    assert len(verdicts) == len(ids)  # no missing/duplicated ids at volume
+    assert fake.calls, "budget passed -> the LLM should have been called"
+
+
 async def test_over_budget_is_413_before_any_llm_call():
-    # over_budget="reject": an input above the 1600-token budget must 413 *before* generation.
-    # The candidate JSON array is padded past budget; the LLM is never called.
+    # over_budget="reject": an input above the 8000-token budget (T11) must 413 *before*
+    # generation. 100 padded candidates (~11.6k est-tokens) clears the raised budget; the
+    # LLM is never called.
     big = json.dumps(
-        [{"id": f"s{i}", "title": "word " * 40, "summary": "word " * 40} for i in range(60)]
+        [{"id": f"s{i}", "title": "word " * 40, "summary": "word " * 40} for i in range(100)]
     )
     fake = FakeLLMClient([json.dumps(_VALID)])
     with pytest.raises(TransformError) as exc:
