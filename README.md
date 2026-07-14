@@ -10,14 +10,29 @@ Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
 See `text-transform-service-DESIGN.md` for the full design and `text-transform-service-BUILD-PLAN.md`
 for the cycle-by-cycle build plan. Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
 
-> **Status:** Cycle T6 — `scene-update` (per-page rolling ledger + salience) and
-> `illustration-prompt` (ledger + cast → SDXL subject prompt) join `cast-mentions`, `cast-canonicalize`
-> (T5), and `image-prompt` (T4). **The service now covers every Scriptorium bake transform.** T6 also
-> adds the soft-validator mechanism: a validator may emit a non-fatal `meta.warnings` entry (see below).
-> The full pipeline runs against the model with **schema-constrained decoding**, single in-flight
-> generation is serialized (queue → `503 busy` on timeout), and `POST /v1/models/unload` frees VRAM.
-> Auth, `GET /v1/transforms`, and ops hardening arrive in T7. See [`docs/models.md`](docs/models.md) for
-> the resolved model bindings and two Ollama-behaviour findings that shaped the client.
+> **Status:** Cycle T7 (ops hardening) — the service is **feature-complete for M1**, pending the
+> human systemd deploy. T7 adds `GET /v1/transforms` (registry listing), optional shared-secret
+> **auth** (`X-Transform-Key`, off by default), structured **per-request JSON logging** with an
+> `X-Request-Id` header, and a committed systemd unit under [`deploy/`](deploy/). All transforms
+> shipped earlier: `image-prompt` (T4, Brickfeed), `cast-mentions` + `cast-canonicalize` (T5) and
+> `scene-update` + `illustration-prompt` (T6) — **every Scriptorium bake transform**, plus the
+> soft-validator `meta.warnings` mechanism (see below). The pipeline runs against the model with
+> **schema-constrained decoding**; single in-flight generation is serialized (queue → `503 busy` on
+> timeout); `POST /v1/models/unload` frees VRAM. See [`docs/models.md`](docs/models.md) for the
+> resolved model bindings and two Ollama-behaviour findings that shaped the client.
+
+## API summary
+
+| Method + path | Auth | Purpose |
+|---|---|---|
+| `GET /health` | never | Service + Ollama status; never 500s |
+| `GET /v1/transforms` | when enabled | List registered transforms + their JSON Schemas |
+| `POST /v1/transform/{name}` | when enabled | Run a named transform: text → schema-constrained JSON |
+| `POST /v1/models/unload` | when enabled | Free model VRAM (`{"model": "..."}` or `{}` for all) |
+
+Auth is off by default (LAN posture) and enabled by setting `TRANSFORM_API_KEY` — see
+[Authentication](#authentication). Every response carries an `X-Request-Id` header, and each
+`/v1/*` request is logged as one structured JSON line — see [Operability](#operability).
 
 ## Requirements
 
@@ -74,9 +89,10 @@ omitting it means `{}`. A success is `200`:
 ```
 
 Errors always use `{"error": {"code": "...", "message": "...", "detail": {...}}}`
-(DESIGN §4): `400 bad_request`/`bad_options`, `404 unknown_transform`, `413 over_budget`,
-`422 validation_failed` (generation failed validators after retries), `503 busy`/
-`model_unavailable`, `500 internal`. **Error codes are API — a change is a breaking change.**
+(DESIGN §4): `400 bad_request`/`bad_options`, `401 unauthorized` (auth enabled, key
+missing/wrong), `404 unknown_transform`, `413 over_budget`, `422 validation_failed`
+(generation failed validators after retries), `503 busy`/`model_unavailable`, `500 internal`.
+**Error codes are API — a change is a breaking change.**
 
 ### Available transforms
 
@@ -177,6 +193,22 @@ defensively (`meta.get("warnings")`), not assume the key exists.
 }
 ```
 
+## Listing transforms — `GET /v1/transforms`
+
+Serializes the registry so a caller can discover what is available and validate against the
+schemas. Each entry carries the caller-facing fields plus both JSON Schemas; the internal
+prompt template and Python validators are never exposed.
+
+```bash
+curl -s localhost:8712/v1/transforms | jq
+# { "transforms": [
+#   { "name": "cast-canonicalize", "version": "0.1.0", "model": "qwen3.5:9b",
+#     "input_budget": 1200, "over_budget": "truncate",
+#     "options_schema": { ... }, "output_schema": { ... } },
+#   ...
+# ] }
+```
+
 ## Unloading models — `POST /v1/models/unload`
 
 Frees model VRAM (the endpoint the Scriptorium orchestrator calls before a render phase).
@@ -209,12 +241,83 @@ for the dev gate.)
 **Model bindings** (see [`docs/models.md`](docs/models.md)): the default per-transform model
 is `qwen3.5:9b`; the fast test/CI model (and `echo`'s binding) is `qwen3.5:2b`. These were
 rebound in T3 from the absent DESIGN §2 tags (`qwen3:8b` / `qwen3:0.6b`) to the same weight
-classes in the installed `qwen3.5` family.
+classes in the installed `qwen3.5` family. `GET /v1/transforms` reports each transform's
+actual binding.
 
-## Development
+## Authentication
+
+Auth is **optional and off by default** (LAN posture, ADR-0003). Set `TRANSFORM_API_KEY` and
+every `/v1/*` request must then carry that value in an `X-Transform-Key` header; `/health` is
+always open. A missing or wrong key is `401 unauthorized` in the standard error envelope.
 
 ```bash
-make test        # non-GPU suite (Ollama mocked) — runs anywhere
-make test-gpu    # GPU suite — run only on the 5070 with Ollama up
-make lint        # ruff
+export TRANSFORM_API_KEY=change-me
+curl -s localhost:8712/v1/transforms                              # -> 401 unauthorized
+curl -s localhost:8712/v1/transforms -H 'X-Transform-Key: change-me'   # -> 200
+curl -s localhost:8712/health                                    # -> 200 (never gated)
 ```
+
+Leaving `TRANSFORM_API_KEY` unset disables auth entirely — no header required.
+
+## Operability
+
+Every response carries an `X-Request-Id` header (uuid4 hex short). Each `/v1/*` request is
+logged as exactly one structured JSON line on the `tts.request` logger (DESIGN §9); `/health`
+is intentionally excluded (it is polled frequently). Fields:
+`ts, request_id, transform, status`, plus `attempts, input_tokens_est, truncated, queued_ms,
+latency_ms` on a completed pipeline run and `error_code` on failures.
+
+```json
+{"ts": "2026-07-13T18:22:04.117+00:00", "request_id": "9f3a1c07", "transform": "scene-update",
+ "status": 200, "attempts": 1, "input_tokens_est": 812, "truncated": false,
+ "queued_ms": 0, "latency_ms": 7434}
+```
+
+Log level comes from `TTS_LOG_LEVEL`. Under systemd the lines land in `journalctl -u
+text-transform-service`. Deployment steps: [`deploy/README.md`](deploy/README.md).
+
+## Adding a transform
+
+A transform is a Python module in [`src/tts/transforms/`](src/tts/transforms/) that builds a
+frozen `Transform` (see [`registry.py`](src/tts/registry.py)). The 8-step recipe:
+
+1. **Module** — add `src/tts/transforms/<name>.py` with a `build_<name>() -> Transform`.
+2. **Schemas** — write the `output_schema` (JSON Schema, passed to Ollama as a grammar *and*
+   re-validated) and the `options_schema` (validated → `400 bad_options` on failure).
+3. **Template** — write the DESIGN §7 prompt verbatim in `SYSTEM: … USER: …` form; `render_messages`
+   splits it and substitutes `{common framing}`. Split any >100-char line into adjacent literals
+   (no newline at the join → byte-identical render) to satisfy ruff without a `version` bump.
+4. **Validators** — compose from [`validators.py`](src/tts/validators.py) (e.g. `word_range`,
+   `banned_substrings`, `no_empty_strings`). A validator returns a reason string to fail (retry →
+   `422`), `None` to pass, or a `"warn:<reason>"` string for a non-fatal `meta.warnings` entry. An
+   options-aware validator sets `wants_options = True` and is called `validator(output, options)`.
+5. **Register** — add `register(build_<name>())` in
+   [`transforms/__init__.py`](src/tts/transforms/__init__.py) (`echo` stays dev-gated; production
+   transforms register unconditionally).
+6. **Fixtures** — add realistic inputs under `tests/fixtures/<domain>/` (public-domain text).
+7. **Unit tests** — drive the real `build_<name>()` with `FakeLLMClient` (schema-retry, budget,
+   validators, options shape). **Never assert exact model wording** — schema/shape/bounds only.
+8. **GPU test** — add a `@pytest.mark.gpu` case in [`tests/test_gpu.py`](tests/test_gpu.py) that runs
+   the real binding through `run_transform` and prints outputs for the CYCLE-LOG eyeball.
+
+## Development / testing
+
+```bash
+make test        # non-GPU suite (Ollama mocked via FakeLLM) — runs anywhere
+make test-gpu    # GPU suite (@pytest.mark.gpu) — run only on the 5070 with Ollama up
+make lint        # ruff
+make dev         # uvicorn --reload on :8712 (TTS_ENV=dev, echo enabled)
+```
+
+All non-GPU tests use `FakeLLMClient` — no network, no model. Real generation is only exercised
+behind `-m gpu`, which asserts schema/mechanics, never wording.
+
+**Fixtures.** `tests/fixtures/book/` holds two sets of *The Time Machine* (PG #35) pages: T5's
+per-case excerpts `0[1-4]_*.txt` (non-consecutive, chosen per character) and T6's **3 consecutive**
+pages `page_[abc].txt` (for `scene-update` threading). Any test globbing `book/*.txt` must scope its
+pattern (the T5 cast-mentions GPU test globs `0*.txt`) so the two sets don't collide.
+
+**Options-aware validators.** Most validators take only the parsed output. One that needs the
+request options (e.g. `illustration-prompt`'s `depicted ⊆ cast` soft check) opts in with a
+`wants_options = True` marker on the callable; the pipeline then calls it `validator(output,
+options)`. Reuse the marker rather than widening the `Validator` type for every check.

@@ -1,5 +1,76 @@
 # Cycle Log
 
+## T7 — Ops hardening: listing · auth · logging · systemd · README (2026-07-13)
+
+**Shipped** — the service is now **deployable and pleasant to operate**; no new transforms, no
+pipeline behavior change. With this cycle TTS is **feature-complete for M1**, pending the human deploy.
+- `app.py` — `GET /v1/transforms` (DESIGN §4): serializes the registry sorted by name via
+  `_serialize_transform()`, projecting exactly `name, version, model, input_budget, over_budget,
+  options_schema, output_schema`. The internal Jinja `template` and Python `validators` are never
+  emitted.
+- `app.py` — **auth** (ADR-0003): `require_api_key` dependency on the three `/v1/*` routes (transform,
+  listing, unload). No-op unless `Settings.auth_enabled` (i.e. `TRANSFORM_API_KEY` set); when enabled a
+  missing/wrong `X-Transform-Key` header raises `TransformError(401, "unauthorized", …)`. A new global
+  `@app.exception_handler(TransformError)` serializes dependency-raised errors into the standard §4
+  envelope (the transform route keeps its inline catch so a genuine bug still maps to 500). `/health`
+  has no auth dependency — always open.
+- `app.py` — **structured logging + `X-Request-Id`** (DESIGN §9): a `log_requests` HTTP middleware mints
+  a `uuid4().hex[:8]` request id, sets `X-Request-Id` on **every** response, and emits one JSON line on
+  the `tts.request` logger for **`/v1/*`** requests (`ts, request_id, transform, status`, plus
+  `attempts, input_tokens_est, truncated, queued_ms, latency_ms` from a completed run and `error_code`
+  on failures). `/health` is excluded from the access log (polled too often) but still gets the header.
+  The transform route stashes `transform_name`/`log_meta`/`error_code` on `request.state`.
+- `logging_setup.py` (new) — `configure_logging(level)`: idempotent handler install. `tts.request` gets a
+  pure-`%(message)s` handler with `propagate=False` (so the JSON line is never prefix-wrapped); `tts.*`
+  diagnostics get a timestamped human handler. Finally consumes the previously-inert `TTS_LOG_LEVEL`.
+- `deploy/text-transform-service.service` (new) — the DESIGN §9 systemd unit, path-adjusted, plus one
+  add: `EnvironmentFile=-/opt/text-transform-service/.env` so `TRANSFORM_API_KEY`/`TTS_ENV` can be
+  supplied without editing the unit (`-` prefix → optional file, runs keyless if absent).
+- `deploy/README.md` (new) — install steps: rsync to `/opt`, `uv sync`, optional `.env` (auth + prod
+  env), `systemctl` install/enable, verify `/health` + `journalctl`, reboot check; plus a "check the
+  unit" section flagging `User=kris`, paths, and hardcoded host/port for human adjustment.
+- `README.md` — completed: status → T7; API summary table (all four endpoints + auth column); `401
+  unauthorized` added to the error taxonomy; `GET /v1/transforms`, `Authentication`, and `Operability`
+  sections; the 8-step "adding a transform" recipe; a Development/testing section documenting the two
+  `book/` fixture globs and the `wants_options` convention. Bindings shown as `qwen3.5` (T3 rebind).
+- Tests (+15): `test_transforms_listing.py` (array shape, exactly-7-fields/no leaked internals, known
+  binding, sorted); `test_auth.py` (missing/wrong/correct key on transform; listing + unload gated;
+  `/health` open; auth-off allows no header); `test_logging.py` (one parseable JSON line per `/v1/*`
+  request with meta fields; `X-Request-Id` matches the logged id; error line carries `error_code`;
+  `/health` not access-logged but still gets the header).
+
+**Verification**
+- `make lint` clean; `make test` → **120 passed** (105 prior + 15 new), 7 gpu deselected.
+- **Live spot-check on the 5070** (Ollama 0.30.7, `TTS_ENV=dev`, `TRANSFORM_API_KEY=secret`):
+  - `GET /health` (no key) → **200**, `X-Request-Id: fb4251f7`; **no** access-log line (excluded).
+  - `GET /v1/transforms` (no key) → **401** `{"error":{"code":"unauthorized",…}}`; **with** key → **200**.
+  - `POST /v1/transform/echo` (no key) → **401**; with key → **200** `{"output":{"echo":"First sentence."}}`.
+  - Parsed `tts.request` lines (all valid JSON):
+    ```json
+    {"ts":"2026-07-14T00:20:13.058829+00:00","request_id":"321d7f5d","transform":null,"status":401,"error_code":"unauthorized"}
+    {"ts":"2026-07-14T00:20:13.070442+00:00","request_id":"078f3743","transform":null,"status":200}
+    {"ts":"2026-07-14T00:20:23.266559+00:00","request_id":"528d666b","transform":"echo","status":200,"attempts":1,"input_tokens_est":6,"truncated":false,"queued_ms":0,"latency_ms":3609}
+    ```
+  - Listing body: sorted `[cast-canonicalize, cast-mentions, echo, illustration-prompt, image-prompt,
+    scene-update]`; first entry carries both schemas as objects, `leaked_template:false`,
+    `leaked_validators:false`.
+
+**Deviations / notes**
+- **`EnvironmentFile` added to the systemd unit** — the one substantive change beyond §9-verbatim, so the
+  key/env can be set without editing the committed unit. Optional (`-` prefix); keyless still works.
+- **§9 systemd-vs-config tension (filed to NOTES):** the unit's `ExecStart` hardcodes `--host 0.0.0.0
+  --port 8712` and does **not** read `TTS_HOST`/`TTS_PORT`. Left verbatim by design; `deploy/README.md`
+  flags it and the env file covers the auth key.
+- **Log scope = `/v1/*` only** (user-confirmed): `/health` polls are excluded from the JSON access log
+  to keep it operable; every response still carries `X-Request-Id`. Faithful to §9's field set, which is
+  transform-shaped.
+- **Global `TransformError` handler added** alongside the transform route's existing inline catch — the
+  handler serves dependency-raised (auth) errors on all `/v1/*` routes; the inline catch stays so a
+  genuine pipeline bug still maps to 500 rather than being caught by the handler.
+- **Human-pending:** the systemd install itself (rsync → `uv sync` → enable → reboot-survives → `/health`
+  ok) is the one open acceptance box — `deploy/` is prepared; the human runs it on the 5070.
+- No out-of-scope discoveries.
+
 ## T6 — `scene-update` + `illustration-prompt` + soft `meta.warnings` (2026-07-13)
 
 **Shipped** — with T6 the service covers **every Scriptorium bake transform** (P1 cast-mentions,

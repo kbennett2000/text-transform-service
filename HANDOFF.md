@@ -1,9 +1,27 @@
 # Handoff
 
 ## Current state
-Cycle **T6 complete** (PR open for human merge). With T6 the service exposes **every Scriptorium bake
-transform** (P1 cast-mentions, P2 cast-canonicalize, P3 scene-update, P5 illustration-prompt). The **two
-final Scriptorium transforms ship**, plus the soft-validator mechanism:
+Cycle **T7 complete** (PR open for human merge). **TTS is feature-complete for M1**, pending the human
+systemd deploy on the 5070. T7 was ops hardening — no new transforms, no pipeline behavior change:
+- `app.py` — **`GET /v1/transforms`** (registry listing incl. both JSON Schemas, sorted; internal
+  template/validators never leaked, via `_serialize_transform`).
+- `app.py` — **auth** (ADR-0003): `require_api_key` dependency on the three `/v1/*` routes, active only
+  when `TRANSFORM_API_KEY` set; missing/wrong `X-Transform-Key` → `401 unauthorized` via a new global
+  `TransformError` exception handler. `/health` always open.
+- `app.py` — **structured logging + `X-Request-Id`** (DESIGN §9): `log_requests` middleware; one JSON
+  line per `/v1/*` request on `tts.request` (fields per §9, `/health` excluded); every response carries
+  `X-Request-Id` (uuid4 hex short).
+- `logging_setup.py` (new) — idempotent `configure_logging`; `tts.request` is pure-JSON, `propagate=False`.
+- `deploy/text-transform-service.service` + `deploy/README.md` (new) — §9 systemd unit (path-adjusted,
+  `EnvironmentFile` added) + install steps. **The install is the one human-pending acceptance box.**
+- `README.md` completed (API table, `401` in the taxonomy, auth + operability + listing sections, the
+  8-step "adding a transform" recipe, testing/fixtures notes).
+- 120 non-GPU tests pass (105 prior + 15 new: listing, auth, logging). Live 5070 spot-check pasted into
+  CYCLE-LOG (401/200 auth pair + parsed JSON log lines).
+
+## Earlier: T6 — the last two Scriptorium transforms (DESIGN §7.4–7.5)
+With T6 the service exposes **every Scriptorium bake transform** (P1 cast-mentions, P2 cast-canonicalize,
+P3 scene-update, P5 illustration-prompt), plus the soft-validator mechanism:
 - `transforms/scene_update.py` — `scene-update` (DESIGN §7.4), `qwen3.5:9b`. Per-page rolling ledger +
   salience. Called **strictly in order**; caller threads each returned ledger into the next call's
   `prior_ledger` (object-or-null). 8-field ledger output; budget 1600 **`over_budget="reject"`**;
@@ -52,11 +70,11 @@ final Scriptorium transforms ship**, plus the soft-validator mechanism:
    switch is a localized change inside `OllamaClient.chat`.
 
 ## Next up
-- **T7 (ops hardening)** — auth (`X-Transform-Key` dependency, active only when `TRANSFORM_API_KEY` set;
-  `/health` exempt; 401 in the §4 envelope), `GET /v1/transforms` (serialize the registry incl. schemas),
-  structured logging (one JSON line/request per DESIGN §9) + `X-Request-Id`, and a
-  `deploy/text-transform-service.service` systemd unit + `deploy/README.md`. No new transforms — the
-  Scriptorium bake surface is complete. See BUILD-PLAN §Cycle T7.
+- **Human deploy (the one open T7 acceptance box):** install under systemd on the 5070 per
+  `deploy/README.md` (rsync → `uv sync` → optional `.env` → `systemctl enable --now`), confirm `/health`
+  ok and survives reboot. Verify the unit's `User=`/paths/host-port against the actual host first.
+- **T8 (Brickfeed bench harness) — DEFERRED.** Build only when explicitly dispatched (BUILD-PLAN §Cycle
+  T8). No new transforms are owed; the code surface is complete for M1.
 
 ## Open questions / notes
 - Production-transform bindings must use `qwen3.5:9b` (not the DESIGN §2 `qwen3:8b` string).
