@@ -18,10 +18,22 @@ sudo rsync -a --delete \
 
 ## 2. Build the virtualenv in place
 
+Run `uv sync` **as the account the service runs as** (the unit's `User=`, e.g. `kb`) — **not** with
+`sudo`:
+
 ```bash
 cd /opt/text-transform-service
-sudo uv sync          # creates /opt/text-transform-service/.venv with uvicorn on PATH
+uv sync               # as the User= account; creates ./.venv with uvicorn on PATH
 ```
+
+**Do not `sudo uv sync`.** When uv has no system Python bound it provisions its own CPython under the
+*invoking* user's home; run as root that lands in `/root/.local/share/uv/python/…` (mode 700), which the
+unprivileged `User=` service cannot exec — systemd then fails the unit with `status=203/EXEC`. Building
+the venv as the service account puts the interpreter under that account's home, where the service reaches it.
+
+The `rsync -a` in step 1 preserves the source tree's ownership, so `/opt/text-transform-service` is owned
+by the copying user and `uv sync` can write `.venv` in place without sudo. (If the tree is root-owned,
+`sudo chown -R <user>:<user> /opt/text-transform-service` first.)
 
 The unit's `ExecStart` runs `.venv/bin/uvicorn tts.app:app --host 0.0.0.0 --port 8712`, so the
 venv must live at `/opt/text-transform-service/.venv` (this is where `uv sync` puts it).
@@ -74,8 +86,9 @@ curl -s localhost:8712/health | jq
 `text-transform-service.service` is transcribed from DESIGN §9. **Verify these against the
 actual host** and adjust if needed:
 
-- **`User=kris`** — change to the account that owns `/opt/text-transform-service` and may run
-  the venv. The service does not need root.
+- **`User=`** — set to the account that owns `/opt/text-transform-service` and built the venv (this repo
+  ships `User=kb`; adjust if your account differs). It must match the user that ran `uv sync` in step 2,
+  or the service can't exec the venv's Python (see the `203/EXEC` note above). The service does not need root.
 - **Paths** — the `WorkingDirectory`, `ExecStart`, and `EnvironmentFile` all assume
   `/opt/text-transform-service`. Keep them in sync if you install elsewhere.
 - **Host/port** — hardcoded `--host 0.0.0.0 --port 8712` in `ExecStart` (matches the DESIGN §9

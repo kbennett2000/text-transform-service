@@ -4,7 +4,7 @@ After=network-online.target ollama.service
 Wants=ollama.service
 
 [Service]
-User=kris
+User=kb
 WorkingDirectory=/opt/text-transform-service
 # Optional: supply TRANSFORM_API_KEY, TTS_ENV=prod, etc. without editing this unit.
 # Create /opt/text-transform-service/.env (chmod 600) or delete this line to run keyless.
