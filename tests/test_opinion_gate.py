@@ -13,12 +13,12 @@ fail-closed obligation lives in the module docstring + the RESPONSE doc, not in 
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.llm import FakeLLMClient
 from tts.pipeline import TransformError, run_transform
 from tts.transforms.opinion_gate import build_opinion_gate
@@ -34,7 +34,7 @@ def _fixture(name: str) -> str:
 async def _run(fake: FakeLLMClient, text: str) -> dict:
     """Run the real opinion-gate transform through the pipeline with a fresh semaphore."""
     return await run_transform(
-        build_opinion_gate(), text, {}, fake, asyncio.Semaphore(1), 90.0
+        build_opinion_gate(), text, {}, fake, GenerationGate(queue_wait_s=90.0)
     )
 
 

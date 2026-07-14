@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.config import Settings
 from tts.llm import OllamaClient
 from tts.pipeline import run_transform
@@ -51,7 +52,7 @@ async def test_echo_transform_returns_schema_valid_output(client):
     t = build_echo()
     assert t.model == TEST_MODEL
     result = await run_transform(
-        t, "Hello world. Second sentence.", {}, client, asyncio.Semaphore(1), 90.0
+        t, "Hello world. Second sentence.", {}, client, GenerationGate(queue_wait_s=90.0)
     )
     assert set(result["output"]) == {"echo"}
     assert isinstance(result["output"]["echo"], str)
@@ -131,7 +132,7 @@ async def test_image_prompt_all_fixtures_schema_valid_and_printed(client, capsys
     for i, path in enumerate(fixtures):
         text = path.read_text(encoding="utf-8")
         result = await run_transform(
-            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+            transform, text, {}, client, GenerationGate(queue_wait_s=120.0)
         )
         output, meta = result["output"], result["meta"]
 
@@ -181,7 +182,7 @@ async def test_cast_mentions_all_book_fixtures_schema_valid_and_printed(client, 
     for i, path in enumerate(fixtures):
         text = path.read_text(encoding="utf-8")
         result = await run_transform(
-            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+            transform, text, {}, client, GenerationGate(queue_wait_s=120.0)
         )
         output, meta = result["output"], result["meta"]
 
@@ -232,7 +233,7 @@ async def test_cast_canonicalize_fixture_schema_valid_and_printed(client, capsys
         (_BOOK_FIXTURES / "canonicalize_time_traveller.json").read_text(encoding="utf-8")
     )
     result = await run_transform(
-        transform, "", options, client, asyncio.Semaphore(1), 120.0
+        transform, "", options, client, GenerationGate(queue_wait_s=120.0)
     )
     output, meta = result["output"], result["meta"]
 
@@ -299,7 +300,9 @@ async def test_scene_update_threading_then_illustration_prompt(client, capsys):
             "cast_names": start["cast_names"],
             "era": start["era"],
         }
-        result = await run_transform(scene, text, options, client, asyncio.Semaphore(1), 120.0)
+        result = await run_transform(
+            scene, text, options, client, GenerationGate(queue_wait_s=120.0)
+        )
         output, meta = result["output"], result["meta"]
 
         # Shape/mechanics only — schema + validator already passed inside the pipeline.
@@ -330,8 +333,7 @@ async def test_scene_update_threading_then_illustration_prompt(client, capsys):
         (_BOOK_FIXTURES / best_page).read_text(encoding="utf-8"),
         ip_options,
         client,
-        asyncio.Semaphore(1),
-        120.0,
+        GenerationGate(queue_wait_s=120.0),
     )
     ip_out, ip_meta = ip_result["output"], ip_result["meta"]
 
@@ -381,7 +383,7 @@ async def test_story_cover_all_fixtures_schema_valid_and_printed(client, capsys)
     for i, path in enumerate(fixtures):
         text = path.read_text(encoding="utf-8")
         result = await run_transform(
-            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+            transform, text, {}, client, GenerationGate(queue_wait_s=120.0)
         )
         output, meta = result["output"], result["meta"]
 
@@ -445,7 +447,7 @@ async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys
         text = path.read_text(encoding="utf-8")
         input_ids = [s["id"] for s in json.loads(text)]
         result = await run_transform(
-            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+            transform, text, {}, client, GenerationGate(queue_wait_s=120.0)
         )
         output, meta = result["output"], result["meta"]
 
@@ -497,7 +499,7 @@ async def test_opinion_gate_realistic_batch_at_volume(client, capsys):
     input_ids = [s["id"] for s in json.loads(text)]
     assert len(input_ids) == 21
 
-    result = await run_transform(transform, text, {}, client, asyncio.Semaphore(1), 120.0)
+    result = await run_transform(transform, text, {}, client, GenerationGate(queue_wait_s=120.0))
     output, meta = result["output"], result["meta"]
     verdicts = output["verdicts"]
 
@@ -574,7 +576,7 @@ async def test_opinion_gate_num_ctx_volume_batches(client, capsys, fixture_name,
     assert len(input_ids) == expected_n
     tragedy_ids = {s["id"] for s in candidates if s["title"] in _T12_TRAGEDY_TITLES}
 
-    result = await run_transform(transform, text, {}, client, asyncio.Semaphore(1), 120.0)
+    result = await run_transform(transform, text, {}, client, GenerationGate(queue_wait_s=120.0))
     output, meta = result["output"], result["meta"]
     verdicts = output["verdicts"]
 
@@ -620,7 +622,7 @@ async def test_opinion_image_brief_all_fixtures_schema_valid_and_printed(client,
     for i, path in enumerate(fixtures):
         text = path.read_text(encoding="utf-8")
         result = await run_transform(
-            transform, text, {}, client, asyncio.Semaphore(1), 120.0
+            transform, text, {}, client, GenerationGate(queue_wait_s=120.0)
         )
         output, meta = result["output"], result["meta"]
 

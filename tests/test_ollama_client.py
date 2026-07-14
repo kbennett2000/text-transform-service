@@ -153,3 +153,36 @@ async def test_list_tags_backend_error_on_unreachable():
     respx.get(f"{BASE}/api/tags").mock(side_effect=httpx.ConnectError("refused"))
     with pytest.raises(LLMBackendError):
         await _client().list_tags()
+
+
+# ---- ensure_loaded: reload-on-demand (T14) --------------------------------------
+
+@respx.mock
+async def test_ensure_loaded_noop_when_model_already_resident():
+    respx.get(f"{BASE}/api/ps").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "qwen3.5:9b"}]})
+    )
+    gen = respx.post(f"{BASE}/api/generate").mock(return_value=httpx.Response(200, json={}))
+    await _client().ensure_loaded("qwen3.5:9b")
+    # Already resident -> no warm generate issued.
+    assert not gen.called
+
+
+@respx.mock
+async def test_ensure_loaded_warms_model_when_absent():
+    respx.get(f"{BASE}/api/ps").mock(
+        return_value=httpx.Response(200, json={"models": []})
+    )
+    gen = respx.post(f"{BASE}/api/generate").mock(return_value=httpx.Response(200, json={}))
+    await _client().ensure_loaded("qwen3.5:9b")
+    assert gen.called
+    sent = json.loads(gen.calls.last.request.content)
+    assert sent["model"] == "qwen3.5:9b"
+    assert sent["keep_alive"] == "5m"  # config keep_alive, not 0 (unlike unload)
+
+
+@respx.mock
+async def test_ensure_loaded_propagates_backend_error():
+    respx.get(f"{BASE}/api/ps").mock(side_effect=httpx.ConnectError("refused"))
+    with pytest.raises(LLMBackendError):
+        await _client().ensure_loaded("qwen3.5:9b")

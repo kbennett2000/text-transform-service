@@ -9,12 +9,12 @@ wording; real generation on `qwen3.5:9b` lives in `test_gpu.py`.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.llm import FakeLLMClient
 from tts.pipeline import TransformError, run_transform
 from tts.transforms.illustration_prompt import build_illustration_prompt
@@ -41,7 +41,7 @@ def _options(**overrides) -> dict:
 
 async def _run(fake: FakeLLMClient, options: dict, text: str = "A page of prose.") -> dict:
     return await run_transform(
-        build_illustration_prompt(), text, options, fake, asyncio.Semaphore(1), 90.0
+        build_illustration_prompt(), text, options, fake, GenerationGate(queue_wait_s=90.0)
     )
 
 
