@@ -2,6 +2,28 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
+## From T6 — for later cycles
+- **The Scriptorium bake surface is COMPLETE.** With scene-update (P3) + illustration-prompt (P5) the
+  service now exposes every transform the bake needs (P1 cast-mentions, P2 cast-canonicalize, P3, P5).
+  T7 is ops (auth, `GET /v1/transforms`, logging, systemd) — no new transforms are owed to Scriptorium.
+- **Soft-validator mechanism now exists (`warn:` → `meta.warnings`).** A validator reason prefixed
+  `"warn:"` is recorded to `meta.warnings[]` without failing/​retrying; `meta.warnings` is **omitted when
+  empty** (keeps the §4 8-key meta shape — consumers use `meta.get("warnings")`). Warnings come only from
+  the successful attempt. To add another soft check, return `"warn:<reason>"` from a validator.
+- **Options-aware validators** opt in via a `wants_options = True` marker on the callable; the pipeline
+  then calls `validator(output, options)`. Only `depicted_subset_of_cast` uses it. If T7+ needs more
+  options-aware checks, reuse the marker rather than widening the `Validator` type for everyone.
+- **`book/` fixtures now hold two sets:** T5's per-case excerpts `0[1-4]_*.txt` and T6's **3 consecutive**
+  pages `page_[abc].txt` (Ch. I dinner → Ch. II vanishing, stable smoking-room location) + `scene_start.json`
+  (page-1 options) + `illustration_cast.json`. Any test that globs `book/*.txt` must scope its pattern
+  (the T5 cast-mentions GPU test now globs `0*.txt`).
+- **`illustration-prompt` deferred model option:** §7.5 notes `qwen3:14b` as a possible swap if an M1
+  blind read shows subject-selection weakness. Not this cycle; the current binding is `qwen3.5:9b`.
+- **Observed model behaviour (qwen3.5:9b), kept OUT of assertions:** scene-update may leave `carry_notes`
+  empty (`""`, schema-valid); illustration-prompt readily depicts characters beyond the passed `cast`
+  (hence the soft warn is expected to fire on real prose). GPU tests assert shape/bounds only.
+- **No out-of-scope discoveries** surfaced in T6.
+
 ## ✅ RESOLVED in T3 — model blocker + think field
 - The absent `qwen3:8b`/`qwen3:0.6b` were **rebound** to `qwen3.5:9b` (default) / `qwen3.5:2b`
   (test/echo) — same weight classes, human-approved. **Production transforms T4–T6 must bind
@@ -77,8 +99,9 @@ Out-of-scope discoveries parked here during T1 (not implemented — scope fence)
 - **GPU-test pattern (reuse in T4–T6):** `tests/test_gpu.py` builds a real `OllamaClient` from
   `Settings.from_env()`, marks with `pytest.mark.gpu`, and asserts schema/mechanics only. Bind
   test transforms to `qwen3.5:2b` for speed; assert the production binding string separately.
-- **`meta.warnings` soft-validator mechanism (T6)** is not built yet — the pipeline currently
-  treats any validator reason as a hard failure (retry→422). T6 adds `warn:<reason>` handling.
+- **~~`meta.warnings` soft-validator mechanism (T6) is not built yet~~ ✅ RESOLVED in T6.** The pipeline
+  now records a `warn:<reason>` validator finding to `meta.warnings` (omit-when-empty) without failing or
+  retrying. See "From T6".
 
 ## Housekeeping
 - `text-transform-service-design.md` (lowercase) is the superseded v1 draft; it sits untracked

@@ -10,13 +10,14 @@ Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
 See `text-transform-service-DESIGN.md` for the full design and `text-transform-service-BUILD-PLAN.md`
 for the cycle-by-cycle build plan. Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
 
-> **Status:** Cycle T5 — the two **Scriptorium cast transforms**, `cast-mentions` (per-page
-> character extraction) and `cast-canonicalize` (evidence → paintable canonical description),
-> join `image-prompt` (T4) on top of the T3 engine: the full pipeline runs against the model
-> with **schema-constrained decoding**, single in-flight generation is serialized (queue →
-> `503 busy` on timeout), and `POST /v1/models/unload` frees VRAM. `scene-update` /
-> `illustration-prompt` and auth arrive in later cycles (T6+). See [`docs/models.md`](docs/models.md)
-> for the resolved model bindings and two Ollama-behaviour findings that shaped the client.
+> **Status:** Cycle T6 — `scene-update` (per-page rolling ledger + salience) and
+> `illustration-prompt` (ledger + cast → SDXL subject prompt) join `cast-mentions`, `cast-canonicalize`
+> (T5), and `image-prompt` (T4). **The service now covers every Scriptorium bake transform.** T6 also
+> adds the soft-validator mechanism: a validator may emit a non-fatal `meta.warnings` entry (see below).
+> The full pipeline runs against the model with **schema-constrained decoding**, single in-flight
+> generation is serialized (queue → `503 busy` on timeout), and `POST /v1/models/unload` frees VRAM.
+> Auth, `GET /v1/transforms`, and ops hardening arrive in T7. See [`docs/models.md`](docs/models.md) for
+> the resolved model bindings and two Ollama-behaviour findings that shaped the client.
 
 ## Requirements
 
@@ -120,6 +121,36 @@ Errors always use `{"error": {"code": "...", "message": "...", "detail": {...}}}
   # {"output": {"one_line": "A limping, pale Victorian gentleman...", "visual_description": "...", "tags": [...]}, "meta": {...}}
   ```
 
+- **`scene-update`** (production; DESIGN §7.4) — Scriptorium P3. Called once per page **strictly in
+  order**: send the page plus the previous page's ledger, get back the updated rolling scene ledger
+  and a per-page selection signal
+  (`{"location", "time_of_day", "atmosphere", "present", "scene_changed", "visual_salience", "best_visual_beat", "carry_notes"}`).
+  `options` is `{"prior_ledger": <object|null>, "cast_names": [...], "era"?}` — `prior_ledger` is `null`
+  on page 1, then each call's ledger is threaded into the next. Budget is **`reject`** (page over the
+  1600 est-token budget → `413 over_budget`). Bound to `qwen3.5:9b`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/scene-update \
+    -H 'content-type: application/json' \
+    -d '{"text": "The Time Traveller sat by the fire, turning the little brass machine...", "options": {"prior_ledger": null, "cast_names": ["the Time Traveller", "Filby"], "era": "1890s"}}' | jq
+  # {"output": {"location": "the Time Traveller's smoking-room", "visual_salience": 0.65, "best_visual_beat": "...", ...}, "meta": {...}}
+  ```
+
+- **`illustration-prompt`** (production; DESIGN §7.5) — Scriptorium P5. Called once per **selected** page.
+  Send the page, its ledger, and the cast entries for characters present; get back one neutral SDXL
+  *subject* prompt weaving each depicted character's visual identifiers in
+  (`{"prompt", "depicted", "shot", "avoid"?}`). `options` is
+  `{"ledger": <object>, "cast": [{"name", "one_line"}, …], "era"?}`. Style/medium words are caller-side;
+  their appearance is drift (`422`). The `depicted ⊆ cast` check is a **soft** validator — a stray name
+  is recorded to `meta.warnings` (below), not a failure. Bound to `qwen3.5:9b`.
+
+  ```bash
+  curl -s localhost:8712/v1/transform/illustration-prompt \
+    -H 'content-type: application/json' \
+    -d '{"text": "...page...", "options": {"ledger": {"best_visual_beat": "The model machine vanishes.", "location": "the smoking-room"}, "cast": [{"name": "the Time Traveller", "one_line": "a pale, grey-haired Victorian gentleman"}]}}' | jq
+  # {"output": {"prompt": "...", "depicted": ["the Time Traveller"], "shot": "medium"}, "meta": {...}}
+  ```
+
 - **`echo`** — a **dev-only** transform (registered only when `TTS_ENV=dev`) that proves the
   pipeline plumbing against a real model. Not a real workload.
 
@@ -127,6 +158,24 @@ Output is **schema-constrained**: the transform's `output_schema` is passed to O
 grammar (`format`) *and* re-validated after generation; on validator failure the pipeline
 retries with a temperature bump before returning `422`. Qwen3.5 "thinking" is disabled
 (`think: false`) — it is pure latency for these extraction transforms.
+
+### Soft warnings — `meta.warnings`
+
+Most validators are **hard**: a violation retries and ultimately returns `422`. A few checks are
+advisory — a mild drift the caller may want to know about but which shouldn't fail the request
+(e.g. `illustration-prompt`'s `depicted ⊆ cast` check). These are **soft validators**: they add a
+string to `meta.warnings` and the request still succeeds with `200`.
+
+`meta.warnings` is **present only when a soft finding fired** — it is absent on the common (clean)
+path, so the success `meta` shape is otherwise exactly as shown above. Consumers should read it
+defensively (`meta.get("warnings")`), not assume the key exists.
+
+```json
+"meta": {
+  "transform": "illustration-prompt", "...": "...",
+  "warnings": ["depicted not in cast: ['Filby']"]
+}
+```
 
 ## Unloading models — `POST /v1/models/unload`
 

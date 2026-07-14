@@ -1,5 +1,96 @@
 # Cycle Log
 
+## T6 — `scene-update` + `illustration-prompt` + soft `meta.warnings` (2026-07-13)
+
+**Shipped** — with T6 the service covers **every Scriptorium bake transform** (P1 cast-mentions,
+P2 cast-canonicalize, P3 scene-update, P5 illustration-prompt).
+- `transforms/scene_update.py` — `build_scene_update()`, verbatim DESIGN §7.4: the 8-field ledger
+  `output_schema` (`location`/`time_of_day` enum/`atmosphere`/`present`/`scene_changed`/
+  `visual_salience` [0,1]/`best_visual_beat` 15–220/`carry_notes`), the §7.4 `options_schema`
+  (`prior_ledger` object-or-null, `cast_names` ≤40, optional `era`), the SYSTEM/USER template, budget
+  **1600 est-tokens `over_budget="reject"`** (paginator-bug posture → 413), temp 0.2, num_predict 500,
+  validator `banned_substrings("best_visual_beat", ["\n"])`. Called once per page strictly in order;
+  the caller threads each returned ledger into the next call's `prior_ledger`.
+- `transforms/illustration_prompt.py` — `build_illustration_prompt()`, verbatim DESIGN §7.5:
+  `output_schema` (`prompt` 60–600, `depicted` ≤4, `shot` enum, optional `avoid`), `options_schema`
+  (`ledger` object, `cast` ≤6 of `{name,one_line}`, optional `era`), the SYSTEM/USER template (reads
+  `options.ledger`/`cast`/`era` + the `{% for c in options.cast %}` loop), budget 1600 `reject`, temp
+  0.6, num_predict 350, validators `word_range("prompt", 20, 90)`, `banned_substrings("prompt",
+  ["**","\n","style of","photograph","oil painting","watercolor","engraving"])`, and the **soft**
+  `depicted_subset_of_cast()`.
+- `pipeline.py` — **soft-validator mechanism**: a validator reason prefixed `"warn:"` is recorded to
+  `meta.warnings[]` and never fails/retries the request; any other non-`None` reason stays a hard
+  failure (retry → 422), unchanged. Warnings come only from the *successful* attempt (a rejected/retried
+  attempt's warnings are dropped). `meta.warnings` is **omitted when empty**, so §4's meta shape is
+  unchanged in the common case (additive-only). `_attempt_reason` now takes `options` and returns
+  `(output, reason, warnings)`.
+- `validators.py` — `depicted_subset_of_cast()`: options-aware soft validator (DESIGN §7.5
+  `depicted ⊆ cast-names-or-empty`). Options-aware validators opt in via a `wants_options` marker; the
+  pipeline then calls them `validator(output, options)`. Existing validators untouched (still single-arg).
+- `transforms/__init__.py` — both new transforms registered **unconditionally** (production).
+- `tests/fixtures/book/` — extended with **3 consecutive** *Time Machine* (PG #35) pages `page_a`
+  (800 w) / `page_b` (791 w) / `page_c` (712 w) covering the Ch. I dinner argument → Ch. II model-machine
+  demonstration → the vanishing (§7.5's worked micro-example beat), a **stable smoking-room location** so
+  the eyeball can confirm location carries across non-moving pages. Plus `scene_start.json` (page-1
+  options, `prior_ledger: null`) and `illustration_cast.json` (the T5 canonical Time Traveller `one_line`
+  as an illustration cast entry). Full book not committed.
+- Tests (+14): `test_pipeline.py` (soft warn → 200 + `meta.warnings`, no retry; no-warning omits the key;
+  a discarded attempt's warning never surfaces); `test_validators.py` (`depicted_subset_of_cast`);
+  `test_scene_update.py` (binding/shape, `prior_ledger` object+null happy paths, over-budget → 413 without
+  calling the LLM, missing required ledger field drives the schema-retry path → 422);
+  `test_illustration_prompt.py` (binding/shape, cast entry missing `one_line` → 400, medium-word
+  "watercolor" → 422, depicted-not-in-cast → **200 + warning**, happy path with no warnings);
+  `test_gpu.py` (thread the 3 pages sequentially, then illustration-prompt on the max-salience page).
+
+**Verification**
+- `make lint` clean; `make test` → **105 passed** (91 prior + 14 new), 7 gpu deselected.
+- `make test-gpu` on the 5070 (Ollama 0.30.7, qwen3.5:9b) → **7 passed** in ~91s (6 prior + 1 new).
+- Live route (`TTS_ENV=prod`): `/health` ok; `POST /v1/transform/scene-update` (prior_ledger null) → 200
+  with the full 8-field ledger (`meta` has no `warnings` key); over-budget page → **413 `over_budget`**
+  (`input_tokens_est:1756, budget:1600`) before any generation; `illustration-prompt` with a cast entry
+  missing `one_line` → **400 `bad_options`**. All via the §4 envelope.
+
+**GPU outputs (qwen3.5:9b, all `attempts:1`)** — sequential threading, cold 11382 ms / warm 7434, 7026 ms:
+- `page_a` (salience **0.45**) — location *"The Time Traveller's study"*, evening, atmosphere *"warm,
+  intellectual, after-dinner"*, present = all six diners; beat: *"The Time Traveller's grey eyes shine and
+  twinkle as he leans forward with a lean forefinger to mark points on the air…"* — `scene_changed:false`.
+- `page_b` (salience **0.72**) — **same location** (*"The Time Traveller's study"*), atmosphere gains
+  *"speculative"*; beat: *"The Time Traveller leans forward with a lean forefinger to trace the movement of
+  mercury along an invisible line on the air…"* — `scene_changed:false`.
+- `page_c` (salience **0.95**) — **same location**, atmosphere *"wondrous, suspenseful, magical"*; beat:
+  *"The model machine swings round and becomes a ghostly eddy of faintly glittering brass and ivory before
+  vanishing from the table."* — the §7.5 beat, correctly the highest-salience page.
+- `illustration-prompt` on `page_c` (7390 ms) — prompt weaves the Time Traveller's identifiers verbatim
+  from the canonical entry (*"an old scientist in a dirty green-smeared coat with pale face and grey
+  hair…"*) around the vanishing beat; `shot: wide`; `depicted: [the Time Traveller, Filby, the
+  Psychologist, the Medical Man]`. **The soft validator fired live and non-fatally:**
+  `meta.warnings = ["depicted not in cast: ['Filby', 'the Psychologist', 'the Medical Man']"]` (only the
+  Time Traveller was in the single-entry cast) — recorded, still 200.
+
+**Eyeball** (human): location carries correctly across the three non-moving pages
+(study→study→study); salience rises monotonically to the vanishing; beats are concrete present-tense
+sentences; the illustration prompt uses the character's visual identifiers, not a bare name.
+
+**Template change** — none. Both §7.4/§7.5 templates ship byte-verbatim (a diff of each module template
+against the DESIGN code-fence is IDENTICAL); both `version` stay `0.1.0`.
+
+**Deviations / notes**
+- **Binding rebind (carried from T3):** §7.4/§7.5 name `qwen3:8b` (absent); both transforms bind
+  `qwen3.5:9b` (human-approved, `docs/models.md`). §7.5's optional `qwen3:14b` swap is a future note, not
+  this cycle.
+- **Verbatim template + long line:** §7.4's "Known cast … `{{ options.cast_names | join(", ") }}`" line is
+  102 chars; kept byte-verbatim via the T5 adjacent-literal split (no newline at the join). §7.5 has no
+  over-100 line, so it uses image_prompt.py's `'''…'''` style (which safely holds the embedded `"""`).
+- **`meta.warnings` omit-when-empty** (confirmed with the user): keeps §4's 8-key meta shape and the
+  existing exact-key pipeline test green; consumers check `meta.get("warnings")`.
+- **Options-aware validators** opt in via `wants_options` rather than a uniform 2-arg signature — smallest
+  blast radius, keeps the common `Validator` contract single-arg.
+- **T5 GPU test glob tightened** from `*.txt` to `0*.txt` so the new `page_*.txt` fixtures don't inflate
+  its "expected 4 excerpts" count.
+- `carry_notes` came back `""` on all three pages (schema-valid: no `minLength`); the model didn't
+  accumulate continuity facts here — a model choice, not a mechanism issue. GPU assertions stay shape-only.
+- No out-of-scope discoveries.
+
 ## T5 — `cast-mentions` + `cast-canonicalize` (2026-07-13)
 
 **Shipped**
