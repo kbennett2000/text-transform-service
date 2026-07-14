@@ -70,6 +70,19 @@ latency_ms=17441 attempts=1 n=21
 === end T11 volume outputs ===
 ```
 
+**Live verification (redeployed to `/opt` on G434, `qwen3.5:9b`)**
+- `deploy/redeploy.sh` run by the human (sudo prompts on their terminal). `/v1/transforms` now
+  lists **`opinion-gate 0.2.0`** (the seven others unchanged at 0.1.0); `/health` = `ok`.
+- **Before/after on the reported batch:** the 21-candidate fixture (`input_tokens_est: 2517`)
+  → `413 over_budget` on the live 0.1.0 deploy (`budget: 1600` — reproduces Brickfeed's report
+  exactly), then → **`200`** on 0.2.0: 21/21 verdicts, id-set equality, `truncated: false`,
+  1 attempt, ~18.2 s, 15 eligible / 6 excluded (the six tragedy/disaster items s03/06/09/12/15/18).
+- **Ops note (no code impact):** first live curls returned `503 model_unavailable` at the client's
+  hard 120 s timeout — a long-running ComfyUI had ballooned to ~5–7 GB VRAM, starving Ollama into a
+  ~69% CPU load (~0.4 tok/s). Not a service fault. Cleared by unloading the model
+  (`ollama stop`) and freeing VRAM (ComfyUI queue-idle → stop → curl → relaunch, all as `kb`, no
+  sudo); with the model `100% GPU` the batch runs ~18 s. Recorded in the deploy-host memory.
+
 **Deviations:** the `num_predict` bump above (approved). No schema shape changes. No other
 transform touched. README unchanged (it does not surface opinion-gate's version/budget).
 
