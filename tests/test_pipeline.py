@@ -114,6 +114,43 @@ async def test_always_invalid_is_422_with_reasons_len_retries_plus_1():
     assert len(exc.value.detail["reasons"]) == t.retries + 1
 
 
+async def test_computed_num_ctx_is_threaded_into_llm_params():
+    # T12: the pipeline passes the transform's num_ctx into the LLM params so Ollama sizes
+    # its context window. Left unset it is the computed default input_budget+num_predict+1024.
+    t = _transform(input_budget=8000, num_predict=5120)
+    fake = FakeLLMClient(['{"echo": "ok"}'])
+    await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert fake.calls[0].params["num_ctx"] == 8000 + 5120 + 1024  # == 14144
+
+
+async def test_num_ctx_override_is_threaded_into_llm_params():
+    t = _transform(input_budget=8000, num_predict=5120, num_ctx=4096)
+    fake = FakeLLMClient(['{"echo": "ok"}'])
+    await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert fake.calls[0].params["num_ctx"] == 4096
+
+
+async def test_validation_failure_422_carries_raw_snippet():
+    # T12 observability: on total validation failure the 422 detail surfaces a bounded
+    # snippet of the last raw output — the signature of context-truncated (empty/garbage)
+    # generation is otherwise invisible. Additive to the existing `reasons` key.
+    t = _transform(retries=0)
+    fake = FakeLLMClient(["{ truncated garbage no close"])
+    with pytest.raises(TransformError) as exc:
+        await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert exc.value.status == 422
+    assert exc.value.detail["reasons"]  # unchanged contract
+    assert exc.value.detail["raw_snippet"] == "{ truncated garbage no close"
+
+
+async def test_raw_snippet_is_bounded_to_300_chars():
+    t = _transform(retries=0)
+    fake = FakeLLMClient(["x" * 5000])  # long non-JSON blob
+    with pytest.raises(TransformError) as exc:
+        await run_transform(t, "text", {}, fake, _sem(), 5.0)
+    assert len(exc.value.detail["raw_snippet"]) == 300
+
+
 async def test_validator_failure_drives_retry_then_422():
     # Schema-valid but a validator rejects (contains a newline); exhausts retries -> 422.
     t = _transform(retries=2, validators=(banned_substrings("echo", ["\n"]),))

@@ -52,6 +52,14 @@ makes that exclusion conditional. The shipped contract:
 - **Bounds:** `verdicts` is capped at `maxItems: 100`; `reason` has `minLength: 1`.
 - **Chunk large batches caller-side.** Batches approaching ~100 candidates or ~8000 est-tokens
   should be chunked caller-side; TTS will 413 rather than judge a truncated batch.
+- **v0.3.0 (T12) — large batches within budget now succeed.** Batches around 34+ candidates
+  (~16.5 KB) that were *under* the 8000-token budget still 422'd (`invalid JSON`) because TTS had
+  never set Ollama's context window (`num_ctx`), whose runtime default is only 4096 tokens — the
+  prompt filled it and starved generation, truncating the output mid-JSON. TTS now sizes `num_ctx`
+  to the transform's full budget, so these complete. **No API change:** the 413/422 codes, the
+  budget, and the chunk-caller-side guidance above are unchanged — this only fixes a false 422 on
+  batches that were already within budget. (The 8000-token budget and `maxItems: 100` are still
+  the ceiling; keep chunking beyond them.)
 
 ### ⚠️ Caller fail-closed obligation (REQUIRED — this is the safety contract)
 

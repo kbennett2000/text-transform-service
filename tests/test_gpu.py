@@ -75,6 +75,7 @@ async def test_constrained_decoding_forces_schema_even_without_json_prompt(clien
         "temperature": 0.0,
         "top_p": 0.8,
         "num_predict": 80,
+        "num_ctx": 2048,  # T12: client now requires num_ctx (the pipeline always supplies it)
         "think": False,
     }
     raw = await client.chat(
@@ -92,6 +93,7 @@ async def test_unload_empties_ps(client):
         "temperature": 0.0,
         "top_p": 0.8,
         "num_predict": 8,
+        "num_ctx": 2048,  # T12: client now requires num_ctx (the pipeline always supplies it)
         "think": False,
     }
     await client.chat([{"role": "user", "content": "hi"}], {}, params)
@@ -414,8 +416,11 @@ OPINION_MODEL = "qwen3.5:9b"
 _VERDICTS = {"eligible", "excluded", "uncertain"}
 # excluded and uncertain both map to "exclude" caller-side (ADR-0007) — the safe-outcome set.
 _SAFE_OUTCOME = {"excluded", "uncertain"}
-# The T11 volume fixture is exercised by its own test below, not the curated-5 verdict test.
-_BATCH_FIXTURE = "06_realistic_batch.txt"
+# The volume fixtures are exercised by their own tests below, not the curated-5 verdict test.
+_BATCH_FIXTURE = "06_realistic_batch.txt"  # T11: 21 candidates
+# T12: larger batches that reproduced the num_ctx-truncation 422 (34 ~16.5 KB) and stress a
+# near-budget batch (60). Excluded from the curated-5 glob; each has a dedicated volume test.
+_VOLUME_FIXTURES = {_BATCH_FIXTURE, "07_volume_batch_34.txt", "08_volume_batch_60.txt"}
 
 
 async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys):
@@ -431,7 +436,7 @@ async def test_opinion_gate_all_fixtures_schema_valid_and_printed(client, capsys
     assert transform.model == OPINION_MODEL
 
     fixtures = sorted(
-        f for f in _OPINION_GATE_FIXTURES.glob("*.txt") if f.name != _BATCH_FIXTURE
+        f for f in _OPINION_GATE_FIXTURES.glob("*.txt") if f.name not in _VOLUME_FIXTURES
     )
     assert len(fixtures) == 5, f"expected 5 fixtures, found {[f.name for f in fixtures]}"
 
@@ -511,6 +516,84 @@ async def test_opinion_gate_realistic_batch_at_volume(client, capsys):
         for v in verdicts:
             print(f"  {v['id']}={v['verdict']} ({v['reason']})")
         print("=== end T11 volume outputs ===\n")
+
+
+# --- T12: num_ctx fix — large batches that truncated the output before v0.3.0 ---------------
+
+# Titles of the designed tragedy/disaster stories in the T12 volume fixtures (07/08). These MUST
+# come back in the safe-outcome set — the safety-critical direction. Extra conservative
+# exclusions of borderline lighthearted stories are allowed (fail-closed); we never assert exact
+# counts or a single verdict, only that no genuine tragedy is judged eligible.
+_T12_TRAGEDY_TITLES = {
+    "Fatal interstate pileup claims three student athletes",
+    "Two workers killed in warehouse fire on the waterfront",
+    "Flash flooding sweeps away homes; several dead, more missing",
+    "Earthquake levels town district; casualties feared to rise",
+    "Commuter ferry capsizes in storm; dozens unaccounted for",
+    "Gas explosion destroys apartment block, killing a family",
+    "Bus plunges off mountain road; multiple fatalities reported",
+    "Mine collapse traps workers; two confirmed dead",
+    "Wildfire razes hillside homes; two residents perish",
+    "Train derailment kills conductor, injures scores",
+    "Building collapse at construction site leaves workers dead",
+    "Small plane crash claims a family of four",
+    "Landslide buries village road; several confirmed dead",
+    "Factory blast kills two, injures a dozen on night shift",
+    "Ice storm pileup on the bridge leaves four dead",
+    "Roof collapse at arena kills two during storm",
+    "Fishing boat lost at sea; three crew presumed drowned",
+    "Apartment fire kills three, displaces dozens overnight",
+}
+
+
+@pytest.mark.parametrize(
+    "fixture_name,expected_n",
+    [("07_volume_batch_34.txt", 34), ("08_volume_batch_60.txt", 60)],
+)
+async def test_opinion_gate_num_ctx_volume_batches(client, capsys, fixture_name, expected_n):
+    """T12: batches that filled Ollama's 4096 default context and truncated the output mid-JSON
+    (→ 422 ``invalid JSON``) before v0.3.0. With the computed ``num_ctx`` (14144) the full prompt
+    and the 5120-token output ceiling both fit, so these complete. Asserts the schema (enforced
+    in the pipeline) and **id-set equality at volume** — the property that fails when generation
+    truncates — plus the safety direction (every designed tragedy lands in the safe-outcome set;
+    conservative extra exclusions are tolerated). The full verdict table is printed for the eyeball.
+    """
+    transform = build_opinion_gate()
+    assert transform.version == "0.3.0"
+    assert transform.num_ctx == 14144  # the T12 fix that lets these finish
+
+    text = (_OPINION_GATE_FIXTURES / fixture_name).read_text(encoding="utf-8")
+    candidates = json.loads(text)
+    input_ids = [s["id"] for s in candidates]
+    assert len(input_ids) == expected_n
+    tragedy_ids = {s["id"] for s in candidates if s["title"] in _T12_TRAGEDY_TITLES}
+
+    result = await run_transform(transform, text, {}, client, asyncio.Semaphore(1), 120.0)
+    output, meta = result["output"], result["meta"]
+    verdicts = output["verdicts"]
+
+    assert all(v["verdict"] in _VERDICTS for v in verdicts)
+    assert meta["model"] == OPINION_MODEL
+    out_ids = [v["id"] for v in verdicts]
+    # The crux: one verdict per input id, each echoed once — exactly what truncation broke.
+    assert set(out_ids) == set(input_ids) and len(out_ids) == len(input_ids), (
+        f"id mismatch at {expected_n}-candidate volume: {len(input_ids)} in vs {len(out_ids)} "
+        f"out; missing={set(input_ids) - set(out_ids)} extra={set(out_ids) - set(input_ids)}"
+    )
+
+    by_id = {v["id"]: v["verdict"] for v in verdicts}
+    for tid in tragedy_ids:
+        assert by_id[tid] in _SAFE_OUTCOME, f"tragedy story {tid} judged {by_id[tid]}, not excluded"
+
+    with capsys.disabled():
+        n_excl = sum(1 for v in verdicts if v["verdict"] == "excluded")
+        print(f"\n\n=== T12 opinion-gate GPU verdict table @ {expected_n}-candidate volume "
+              f"(qwen3.5:9b, num_ctx={transform.num_ctx}) ===")
+        print(f"latency_ms={meta['latency_ms']} attempts={meta['attempts']} n={len(verdicts)} "
+              f"excluded={n_excl} tragedies={len(tragedy_ids)}/{len(tragedy_ids)} caught")
+        for v in verdicts:
+            print(f"  {v['id']}={v['verdict']} ({v['reason']})")
+        print(f"=== end T12 {expected_n}-candidate outputs ===\n")
 
 
 async def test_opinion_image_brief_all_fixtures_schema_valid_and_printed(client, capsys):

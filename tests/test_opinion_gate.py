@@ -51,9 +51,13 @@ _VALID = {
 def test_transform_binding_and_shape():
     t = build_opinion_gate()
     assert t.name == "opinion-gate"
-    assert t.version == "0.2.0"
+    assert t.version == "0.3.0"  # T12: num_ctx fix for large-batch output truncation
     assert t.model == "qwen3.5:9b"
     assert t.input_budget == 8000  # T11: raised from 1600 for real batch volumes
+    assert t.num_predict == 5120  # T11: output ceiling for a verdict-per-candidate batch
+    # T12: computed context window = input_budget + num_predict + 1024 headroom. Ollama's 4096
+    # default starved generation at ~34-candidate volume (prompt filled the window) → 422.
+    assert t.num_ctx == 8000 + 5120 + 1024  # == 14144
     assert t.over_budget == "reject"  # T11: unchanged — never truncate a batch
     assert t.options_schema == {}
     # ADR-0007 condition 1: the verdict enum is closed and includes an explicit `uncertain`.
@@ -70,7 +74,7 @@ async def test_happy_path_mixed_verdicts():
     assert {v["id"] for v in verdicts} == {"a1", "b2"}
     assert all(v["verdict"] in _VERDICTS for v in verdicts)
     assert result["meta"]["transform"] == "opinion-gate"
-    assert result["meta"]["transform_version"] == "0.2.0"
+    assert result["meta"]["transform_version"] == "0.3.0"
     assert result["meta"]["model"] == "qwen3.5:9b"
     assert result["meta"]["attempts"] == 1
 

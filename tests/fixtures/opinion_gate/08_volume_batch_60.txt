@@ -1,0 +1,302 @@
+[
+  {
+    "id": "s01",
+    "title": "Town's giant pumpkin smashes state record at fall fair",
+    "summary": "A retired schoolteacher's 2,412-pound pumpkin took the blue ribbon at the county fair, edging last year's champion. The grower credits an experimental compost blend and a summer of relentless watering. Organizers say attendance hit a ten-year high as families lined up for photos. The pumpkin will be hollowed into a boat for the annual regatta on the millpond next month."
+  },
+  {
+    "id": "s02",
+    "title": "Second-graders raise a therapy-dog reading squad",
+    "summary": "An elementary school's new program pairs shy young readers with certified therapy dogs, and teachers say confidence has soared. The dogs sit patiently while children sound out tricky words. The waitlist to join now stretches into next semester. One parent called the weekly session the highlight of her daughter's entire school week."
+  },
+  {
+    "id": "s03",
+    "title": "Fatal interstate pileup claims three student athletes",
+    "summary": "A chain-reaction crash in dense fog on the interstate killed three members of a college track team and injured a dozen travelers. Investigators are examining whether a jackknifed truck triggered it. The university opened a counseling center and postponed the weekend's meets. The team's coach asked that the community keep the injured runners in their thoughts."
+  },
+  {
+    "id": "s04",
+    "title": "Diner celebrates 75 years with a nickel-coffee day",
+    "summary": "The oldest diner in town rolled prices back to 1950 for a morning, serving five-cent coffee to a line around the block. The owner, whose grandfather opened the counter, wanted to thank the regulars who kept the booths full through three generations. The griddle never cooled before noon, and the cook says his feet have not forgiven him yet."
+  },
+  {
+    "id": "s05",
+    "title": "Amateur astronomer photographs a rare green comet",
+    "summary": "A hobbyist with a backyard telescope captured a striking image of a comet not visible to the naked eye, and skywatching groups have shared it widely. He spent four cold nights aligning his rig before the clouds broke. Science teachers plan to use the photo in class. He plans to livestream the comet's closest pass so the whole town can watch from home."
+  },
+  {
+    "id": "s06",
+    "title": "Two workers killed in warehouse fire on the waterfront",
+    "summary": "A fast-moving fire tore through a riverside warehouse overnight, killing two employees unable to reach an exit. Crews fought the blaze for hours as stored chemicals fed the flames. Investigators are examining an electrical fault; counselors were made available to survivors. Coworkers left flowers at the warehouse gate as investigators combed the gutted interior."
+  },
+  {
+    "id": "s07",
+    "title": "Middle-schoolers' recycling robot wins regional prize",
+    "summary": "A team of thirteen-year-olds built a sorting robot that separates cans from bottles, taking first at a regional engineering fair. The students coded the vision system over lunch periods. The district is weighing a cafeteria pilot next year. Judges praised the design's simplicity and asked the students to demonstrate it twice."
+  },
+  {
+    "id": "s08",
+    "title": "Rescued shelter cat elected honorary town mayor",
+    "summary": "Residents cast penny-a-vote ballots to name a one-eyed shelter cat honorary mayor, raising thousands for the shelter. The cat now holds court in a tiny City Hall bed and signs proclamations with an inked paw. Adoptions have tripled since the campaign began. A local sign-maker donated a tiny brass nameplate for the cat's City Hall door."
+  },
+  {
+    "id": "s09",
+    "title": "Flash flooding sweeps away homes; several dead, more missing",
+    "summary": "Torrential rain sent a wall of water through a low-lying neighborhood before dawn, and officials confirmed several deaths with more residents unaccounted for. Rescue teams pulled survivors from rooftops as the river crested at a record. The governor declared an emergency. Volunteers formed a sandbag line as forecasters warned of a second crest by nightfall."
+  },
+  {
+    "id": "s10",
+    "title": "Retiree knits tiny sweaters for cold-snap penguins",
+    "summary": "A ninety-year-old former nurse has knitted hundreds of small wool sweaters for a wildlife center that rehabilitates seabirds. She works through three balls of yarn a week and recruited a dozen friends. The center says the garments keep recovering birds warm. The center says the sweaters also make the recovering birds far easier to spot and count."
+  },
+  {
+    "id": "s11",
+    "title": "High school marching band wins national championship",
+    "summary": "The regional high school band brought home a national title after a season of dawn practices, edging ninety schools. The ocean-tides show drew a standing ovation and near-perfect drill marks. Boosters are already fundraising for next year's buses. The drum line stayed an extra hour after the trophy ceremony just to soak it in."
+  },
+  {
+    "id": "s12",
+    "title": "Earthquake levels town district; casualties feared to rise",
+    "summary": "A powerful earthquake flattened rows of older buildings in a historic district, trapping an unknown number of people under rubble. Rescuers worked through the night by floodlight as aftershocks rattled the ruins. Officials warned the toll is likely to climb. Aid convoys idled at the edge of the district, unable to reach the worst of the rubble."
+  },
+  {
+    "id": "s13",
+    "title": "Library's seed-lending program doubles in its second year",
+    "summary": "A public library that lends vegetable-seed packets instead of only books has doubled its membership, with gardeners returning saved seed at harvest. Staff say the tomato drawer has become a swap-meet of advice. A children's plot grew enough zucchini to donate crates. Master gardeners now hold a monthly clinic beside the seed drawers for first-time growers."
+  },
+  {
+    "id": "s14",
+    "title": "Ferry crew reunites lost teddy bear with tearful toddler",
+    "summary": "Deckhands on a commuter ferry posted photos of a stuffed bear 'on vacation' around the vessel until its family was found. The toddler squealed when the bear came home in a tiny crew cap. The crew says it is their third such rescue this year. The captain has started keeping a spare 'rescue hat' behind the wheelhouse for such occasions."
+  },
+  {
+    "id": "s15",
+    "title": "Commuter ferry capsizes in storm; dozens unaccounted for",
+    "summary": "An overloaded commuter ferry capsized in high winds during the evening crossing, and dozens of passengers remain missing after an overnight search. Survivors described a sudden list before it went over. An inquiry into the boat's capacity has begun. Families waited at the terminal through the night for any word from the search boats."
+  },
+  {
+    "id": "s16",
+    "title": "Barber gives free haircuts before first day of school",
+    "summary": "A neighborhood barber opened his chairs for a Saturday of free back-to-school haircuts, trimming more than eighty kids with volunteer stylists. Families lined the sidewalk sharing coffee. He says a sharp cut helps a nervous kid walk in standing tall. One first-grader hugged the barber and announced he was ready to raise his hand all year."
+  },
+  {
+    "id": "s17",
+    "title": "Community garden turns vacant lot into a butterfly haven",
+    "summary": "Volunteers transformed a weedy lot into a pollinator garden that now draws clouds of migrating monarchs. Neighbors planted milkweed and left a logbook where visitors tally species. The count has passed forty, and a nearby class walks over weekly to sketch. A retired entomologist visits on Fridays to help the children identify what they have found."
+  },
+  {
+    "id": "s18",
+    "title": "Gas explosion destroys apartment block, killing a family",
+    "summary": "A gas explosion ripped through a low-rise apartment building at dawn, collapsing a stairwell and killing a family of four. Neighbors were evacuated as crews searched the debris. Utility inspectors are examining a suspected ruptured line; the block was condemned. The utility shut gas to the surrounding blocks while inspectors traced the ruptured line."
+  },
+  {
+    "id": "s19",
+    "title": "Town choir surprises snowed-in seniors with doorstep carols",
+    "summary": "A volunteer choir drove between homes to sing for elderly residents who rarely get visitors, bundling up on porches for a song apiece. One resident, ninety-four, conducted from her window with a wooden spoon. The choir plans to make the tour a tradition. The youngest vendor, age six, insisted on giving every customer a hand-drawn thank-you card."
+  },
+  {
+    "id": "s20",
+    "title": "Farmers' market debuts a kids-run stand row",
+    "summary": "The weekend market set aside a row for young entrepreneurs, and a dozen kids sold lemonade, bracelets, and painted rocks to a steady crowd. Organizers waived stall fees and coached the sellers on change. The top stand donated its earnings to the shelter. Drivers on the route now honk a little tune the artists worked into the mural's design."
+  },
+  {
+    "id": "s21",
+    "title": "Bus plunges off mountain road; multiple fatalities reported",
+    "summary": "A tour bus veered off a rain-slicked mountain switchback into a ravine, killing multiple passengers and injuring many others. Rescue crews rappelled down the slope to reach the wreckage. The road is closed as investigators examine the brakes and the failed guardrail. The switchback has since been closed while engineers redesign the failed guardrail."
+  },
+  {
+    "id": "s22",
+    "title": "Bookmobile gets a fresh mural from local artists",
+    "summary": "The county's aging bookmobile returned to its route wrapped in a bright mural painted by local artists over two weekends. Children now chase the van to see the reading foxes and rocket ships. The librarian says circulation on the route has jumped. A local restaurant offered the divers free lunch, and they cleaned their plates twice over."
+  },
+  {
+    "id": "s23",
+    "title": "Volunteer divers haul a season of litter from the swimming lake",
+    "summary": "A club of volunteer divers cleared sunken cans, lost sunglasses, and many flip-flops from the town swimming lake over a warm weekend. They filled six bins and found keys reported missing in July. The parks department is weighing a small thank-you sign. Regulars have started arriving before sunrise just to compare their near-miss guesses."
+  },
+  {
+    "id": "s24",
+    "title": "Mine collapse traps workers; two confirmed dead",
+    "summary": "A tunnel collapse at a regional mine trapped a shift of workers underground, and rescuers confirmed two deaths as they dig toward the others. Families gathered at the gate through a tense night. Regulators opened an investigation into the shoring that failed. The night shift's families kept a vigil at the mine gate as the dig continued below."
+  },
+  {
+    "id": "s25",
+    "title": "Bakery's mystery-donut giveaway sparks a guessing game",
+    "summary": "A corner bakery began hiding a golden ticket in one random donut each morning, and the game has lines forming before dawn. Winners get a month of free coffee and name next week's special. The baker says the flour bills are up but so is the laughter. The troop is already scouting a second washed-out crossing farther along the same creek."
+  },
+  {
+    "id": "s26",
+    "title": "Scouts rebuild a storm-damaged trail bridge in a weekend",
+    "summary": "A local scout troop rebuilt a footbridge on a popular trail that buckled in spring flooding, earning a service badge. Under a carpenter's guidance the teens milled planks and set new pilings. Hikers left a jar of thank-you notes at the trailhead. The grocer says a stranger's prepaid coffee once turned around the worst morning of his year."
+  },
+  {
+    "id": "s27",
+    "title": "Wildfire razes hillside homes; two residents perish",
+    "summary": "A wind-driven wildfire jumped a ridge and consumed dozens of hillside homes overnight, and authorities confirmed two residents died trying to flee. Thousands were ordered to evacuate as the fire outran containment lines. Shelters filled as smoke choked the valley. Evacuees watched from a ridge as the fire consumed the homes they had just fled."
+  },
+  {
+    "id": "s28",
+    "title": "Grocer's 'pay-it-forward' board clears every tab by noon",
+    "summary": "A neighborhood grocer pinned a corkboard where shoppers prepay small tabs for strangers, and on its launch day every note was claimed before lunch. Customers left milk, bread, and a few birthday cakes. The owner says he had to refill the board twice. The parks board named the new set in her honor with a small plaque bolted to the frame."
+  },
+  {
+    "id": "s29",
+    "title": "Fifth-grader's lemonade stand funds new playground swings",
+    "summary": "A ten-year-old who set up a summer lemonade stand handed the parks board a jar of quarters to replace the playground's broken swings. Neighbors matched her total within a week. The new swings were installed in time for the last warm weekend. Several of her former students now drive across town each week to help grade worksheets."
+  },
+  {
+    "id": "s30",
+    "title": "Train derailment kills conductor, injures scores",
+    "summary": "A passenger train derailed on a curve at speed, killing the conductor and injuring scores of riders trapped in overturned cars. Emergency crews cut through steel to reach the wounded. Federal investigators are examining the track and the train's data recorder. Investigators pulled the data recorder from the wreckage as the injured were airlifted out."
+  },
+  {
+    "id": "s31",
+    "title": "Retired teacher's free tutoring club fills the town hall",
+    "summary": "A retired math teacher's after-school tutoring club has outgrown her kitchen and moved into the town hall, drawing dozens of students a night. Parents say report cards have brightened. She refuses payment, asking only that graduates come back to tutor. Neighbors have begun leaving handwritten recipes tucked among the canned goods."
+  },
+  {
+    "id": "s32",
+    "title": "Town unveils a 'little free pantry' on every block",
+    "summary": "A civic group installed weatherproof pantry boxes on a dozen corners where neighbors leave canned goods for anyone who needs them. Volunteers restock at dawn and say the shelves rarely stay full for long. A local scout troop built the boxes from donated lumber. He is teaching a beginners' class this fall, and every spot filled within a single afternoon."
+  },
+  {
+    "id": "s33",
+    "title": "Building collapse at construction site leaves workers dead",
+    "summary": "A partially built parking structure collapsed without warning, killing several construction workers and burying equipment under tons of concrete. Rescuers searched the rubble for anyone still trapped. The contractor was ordered to halt all work pending an inquiry. The contractor's other sites were ordered shut pending a review of the same design."
+  },
+  {
+    "id": "s34",
+    "title": "Beekeeper's rooftop hives sweeten the whole neighborhood",
+    "summary": "A hobbyist beekeeper's rooftop hives have pollinated gardens for blocks around, and jars of the honey now sell out at the corner store. Neighbors report their tomato yields doubled. He hosts monthly rooftop tastings for curious kids and their parents. The shelter has framed one especially tiny pair above the front desk as a mascot."
+  },
+  {
+    "id": "s35",
+    "title": "Volunteer 'sock brigade' knits through the first frost",
+    "summary": "A knitting circle that calls itself the sock brigade delivered five hundred pairs of wool socks to a downtown shelter before the first hard frost. Members knit on the bus, at lunch, and during meetings. The shelter says warm feet are the request they hear most. The arborist says the old oak could easily stand for another hundred years now."
+  },
+  {
+    "id": "s36",
+    "title": "Small plane crash claims a family of four",
+    "summary": "A single-engine plane went down in wooded terrain shortly after takeoff, killing all four members of a family aboard. Searchers reached the wreckage at nightfall. Aviation investigators recovered the engine and are examining maintenance records and the weather. Recovery crews reached the crash site by nightfall and secured the plane's engine."
+  },
+  {
+    "id": "s37",
+    "title": "Town's oldest oak saved by a neighborhood fundraiser",
+    "summary": "Residents raised enough in a weekend bake sale to hire an arborist and save a two-century oak weakened by storms. Cables now brace its heaviest limbs. The tree, a favorite for wedding photos, will get a small plaque telling its history. The seven-year-old has been challenged to a rematch by the mayor's own grandmother."
+  },
+  {
+    "id": "s38",
+    "title": "Kids' chess club challenges the mayor to a friendly match",
+    "summary": "An after-school chess club invited the mayor to a simultaneous exhibition, and the youngest player, age seven, forced a draw to loud cheers. The mayor pledged new boards for the rec center. The club has doubled since the match made the local paper. The traveler mailed back a postcard from three states away just to say thank you again."
+  },
+  {
+    "id": "s39",
+    "title": "Landslide buries village road; several confirmed dead",
+    "summary": "Days of rain triggered a landslide that buried a stretch of village road and the vehicles on it, and officials confirmed several deaths with rescues ongoing. Heavy machinery clawed at the mud through the night. Nearby homes were evacuated as the slope stayed unstable. Neighbors were moved to higher ground as the saturated slope threatened to give way again."
+  },
+  {
+    "id": "s40",
+    "title": "Diner waitress returns lost wallet stuffed with cash",
+    "summary": "A diner waitress tracked down a traveler who left a wallet thick with vacation cash in a booth, mailing it back untouched with a note. The grateful owner sent a reward she donated to the tip pool. Regulars say it is exactly the kind of place it is. The veteran has invited the whole crew back for a barbecue on the very ramp they built."
+  },
+  {
+    "id": "s41",
+    "title": "Neighbors build a wheelchair ramp for a veteran overnight",
+    "summary": "A crew of neighbors surprised an aging veteran by framing and finishing a wheelchair ramp to his porch in a single Saturday. Donated lumber and a potluck lunch kept the build going. He rolled down the new ramp to a round of applause. By dawn a few parents had quietly fallen asleep in the beanbags beside their kids."
+  },
+  {
+    "id": "s42",
+    "title": "Factory blast kills two, injures a dozen on night shift",
+    "summary": "An explosion at a chemical plant during the night shift killed two workers and sent a dozen more to hospitals with burns. The blast shattered windows blocks away. Regulators are examining a pressurized vessel as families waited for news at the gate. The plant's other pressure vessels were taken offline until the cause is understood."
+  },
+  {
+    "id": "s43",
+    "title": "Town library hosts an all-night reading marathon",
+    "summary": "A public library kept its doors open past midnight for a reading marathon that packed the stacks with pajama-clad kids and cocoa. Volunteers read chapter after chapter until the youngest listeners drifted off in beanbags. Late fines were waived for the night. The final chord drew a standing ovation and a shower of dandelions from the front row."
+  },
+  {
+    "id": "s44",
+    "title": "Community orchestra plays a free concert in the park",
+    "summary": "A volunteer orchestra drew its largest crowd yet for a free summer concert on the town green, closing with a sing-along under the stars. Families spread blankets and shared pie. The conductor says donations will fund music lessons for a dozen students. He is now welding a matching rack shaped like a trout for the bait shop by the pier."
+  },
+  {
+    "id": "s45",
+    "title": "Ice storm pileup on the bridge leaves four dead",
+    "summary": "A sudden ice storm turned a river bridge into a chain-reaction pileup that killed four motorists and closed the span for hours. Rescue crews inched across the ice to reach crushed vehicles. Officials urged drivers to stay home as the freezing rain continued. The bridge stayed closed for hours as crews chipped stranded vehicles from the ice."
+  },
+  {
+    "id": "s46",
+    "title": "Local welder builds free bike racks for downtown shops",
+    "summary": "A retired welder has installed a dozen whimsical bike racks shaped like fish and bicycles outside downtown shops, all at no charge. Merchants say cyclists now linger longer. He is taking requests and jokes that his garage has become a public art studio. The three-legged winner rode home in a wagon pulled by last year's runner-up."
+  },
+  {
+    "id": "s47",
+    "title": "Town crowns a 'best mutt' at its first dog parade",
+    "summary": "The inaugural downtown dog parade drew scores of costumed pups and crowned a three-legged rescue mutt 'best in show' to happy applause. Entry fees benefited the animal shelter. Organizers say the parade will return next spring, bigger and muddier. The class voted to name the next big storm after their principal, win or lose."
+  },
+  {
+    "id": "s48",
+    "title": "Roof collapse at arena kills two during storm",
+    "summary": "The roof of an aging arena gave way under heavy snow during an event, killing two people and injuring others as the crowd fled. Structural engineers are examining the failure. The city ordered inspections of other buildings with similar roofs. Engineers began inspecting other arenas built with the same roof design that winter."
+  },
+  {
+    "id": "s49",
+    "title": "Retiree's backyard weather station goes viral with kids",
+    "summary": "A retiree who built a backyard weather station now emails a daily forecast to three classrooms, and the students hang on his rain predictions. He lets them name incoming storms. Teachers say attendance is highest on days a big front is due. Children reached up to touch their favorite horses as the band organ wheezed to life."
+  },
+  {
+    "id": "s50",
+    "title": "Volunteers restore a carousel that spun for a century",
+    "summary": "A team of volunteers spent two winters repainting the hand-carved horses of a century-old carousel, which reopened to a line of grandparents and grandchildren. The original band organ still plays. Ticket proceeds will keep the gears greased for the next generation. One summer hire has already been promoted to training the next round of nervous newcomers."
+  },
+  {
+    "id": "s51",
+    "title": "Cafe hires teens for a summer of 'first jobs'",
+    "summary": "A corner cafe set aside its summer shifts for local teenagers looking for a first job, pairing each with a patient mentor behind the counter. The owner says a few spilled lattes are worth it. Several hires are already talking about opening cafes of their own. The foreman taped the children's thank-you signs to the inside of his plow cab."
+  },
+  {
+    "id": "s52",
+    "title": "Town's snowplow drivers get a surprise cocoa welcome",
+    "summary": "After an all-night storm, residents lined the main road with thermoses of cocoa to thank the snowplow crews finishing their double shifts. Kids held hand-drawn thank-you signs. The road foreman says it was the warmest reception in thirty winters of plowing. Shopkeepers have promised to water the beds all spring so the ribbon of color survives."
+  },
+  {
+    "id": "s53",
+    "title": "Girl scouts plant a thousand tulips along Main Street",
+    "summary": "A troop of girl scouts spent a crisp Saturday planting a thousand donated tulip bulbs down both sides of Main Street. Shopkeepers brought out cider. Come spring, the town expects a ribbon of color that organizers hope becomes an annual tradition. One boy proudly tied his first bowline and refused to untie it for the rest of the day."
+  },
+  {
+    "id": "s54",
+    "title": "Retired sailor teaches free knot-tying at the harbor",
+    "summary": "A retired sailor sets up a folding table at the harbor each weekend to teach anyone who asks how to tie a bowline, and a small crowd of kids now gathers. He keeps a bucket of frayed rope for practice. Parents say it beats screens for an afternoon. The church has decided to make the five-way tie an official category from now on."
+  },
+  {
+    "id": "s55",
+    "title": "Local diner's pie contest ends in a five-way tie",
+    "summary": "A diner's annual pie contest ended in a rare five-way tie after judges could not separate the entries, so all five bakers took home a ribbon. The recipes will run in the church cookbook. Slices sold out before the last judge finished scoring. The leaping-trout mural was photographed from a rooftop before the first raindrop fell."
+  },
+  {
+    "id": "s56",
+    "title": "Town swaps its parking lot for a weekend chalk festival",
+    "summary": "A downtown parking lot became a canvas as artists and kids covered it in chalk murals for a weekend festival, drawing crowds despite a threat of rain. Merchants reported their busiest Saturday in months. The winning mural, a leaping trout, will be photographed before it washes away. A newcomer borrowed a hedge trimmer and left with three new friends and a dinner invitation."
+  },
+  {
+    "id": "s57",
+    "title": "Neighborhood 'tool library' lends out its thousandth drill",
+    "summary": "A volunteer-run tool library that lends drills, ladders, and mowers celebrated its thousandth checkout with a backyard barbecue. Members say it has saved them a fortune and started more than a few friendships over borrowed hedge trimmers. A woodworking class starts next month. The beagle, now named after their teacher, greeted the class with a wag at every visit."
+  },
+  {
+    "id": "s58",
+    "title": "Third-graders' penny drive buys a shelter a new furnace",
+    "summary": "A class of third-graders collected pennies for a semester and handed the animal shelter enough to install a new furnace before winter. The students toured the kennels and named a rescued beagle after their teacher. The shelter says the timing was a lifesaver for the cats. Lifeguards returned to the riverbank for the first time in more than a decade."
+  },
+  {
+    "id": "s59",
+    "title": "Town celebrates as the river finally passes a swim test",
+    "summary": "After a decade of cleanup, the town river passed its water-quality test and reopened for swimming to a crowd of splashing kids and relieved parents. Volunteers who hauled out shopping carts and tires cut the ribbon. A floating dock is planned for next summer. The bakery's forty-year-old starter got a round of applause of its very own."
+  },
+  {
+    "id": "s60",
+    "title": "Retired baker teaches sourdough to a sold-out class",
+    "summary": "A retired baker's free sourdough workshop at the community center filled every seat, and students left cradling jars of bubbling starter like pets. He shared a starter his family has kept alive for forty years. A follow-up bagel class already has a waitlist. Attendance always spikes on days the retiree's forecast calls for thunder."
+  }
+]

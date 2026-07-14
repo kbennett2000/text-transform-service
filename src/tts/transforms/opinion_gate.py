@@ -49,6 +49,15 @@ the same cycle: the 1024 output ceiling could not emit a verdict per candidate f
 admits (~66 candidates × ~70 out-tokens). It is a ceiling, not a fixed cost — small batches stop
 at the natural end, so this only lets large batches finish.
 
+v0.3.0 (T12) — no field on *this* transform changed; the fix is registry-wide. T11's raised
+``input_budget``/``num_predict`` were still defeated at ~34-candidate volume because TTS never set
+Ollama's ``num_ctx`` — the runtime default is only **4096 tokens**. A 34-candidate prompt is
+~3950 tokens, so it nearly filled the window and left ~140 tokens for output: generation truncated
+mid-JSON (``stop processing … truncated = 1``) → 422 ``invalid JSON``. The pipeline now sends a
+computed ``num_ctx`` (``input_budget + num_predict + 1024`` = **14144** here) so the full prompt
+and the 5120-token output ceiling both fit. Version bumped because the observable behavior at
+volume changed (34-candidate batches now succeed). See the T12 CYCLE-LOG entry.
+
 id-completeness (one verdict per input id, each echoed exactly once) is not schema-enforceable —
 validators see the output and options, never the raw input text. The caller fail-closed rule
 (missing/duplicate id → exclude) covers the gap; the T10 GPU test checks id-set equality.
@@ -116,13 +125,15 @@ def build_opinion_gate() -> Transform:
     """Construct the ``opinion-gate`` transform (Brickfeed request §2, reconciled in T10)."""
     return Transform(
         name="opinion-gate",
-        version="0.2.0",
+        version="0.3.0",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # production binding; see docs/models.md (T3 rebind)
         temperature=0.0,  # deterministic classification gate
         num_predict=5120,  # T11: output ceiling sized to input_budget (~66 candidates × ~70)
         input_budget=8000,  # T11: batch-shaped task (maxItems 100); 1600 413'd real batches
         over_budget="reject",  # 413; never silently drop candidates (request's own choice)
+        # num_ctx left to the computed default (input_budget+num_predict+1024 = 14144); T12 fix
+        # for the 4096-default context starving generation on large batches (see docstring).
         options_schema={},
         output_schema=_OUTPUT_SCHEMA,
         validators=(
