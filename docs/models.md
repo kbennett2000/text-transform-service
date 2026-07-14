@@ -68,3 +68,58 @@ to `/api/generate`'s `system` and `prompt` fields. Everything else (`think`, `ke
 `options:{temperature,top_p,num_predict}`, `stream:false`, `format`) is identical. `/health` still
 uses `/api/ps` + `/api/tags` (unchanged). If a future Ollama fixes `/api/chat` format enforcement,
 switching back is a localized change inside `OllamaClient`. Recorded as a deviation in CYCLE-LOG.
+
+## ⚠️ HOST BINDING — `q8_0` KV cache is REQUIRED for large opinion-gate batches (cycle T13)
+
+**`opinion-gate` at batch volume needs the Ollama daemon configured with a quantized KV cache.**
+This is a **host-level Ollama setting** (a systemd drop-in on `ollama.service`), not a TTS config
+var — TTS cannot set it per request (see the "per-request `flash_attn` is ignored" note below).
+
+```
+# /etc/systemd/system/ollama.service.d/flash-attn.conf  (shipped: deploy/ollama.service.d/…)
+[Service]
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
+```
+
+**The problem it fixes.** `opinion-gate` classifies up to ~100 candidates per call, so TTS sizes
+`num_ctx` to the transform budget (`input_budget + num_predict + 1024` = **14144**, cycle T12). At
+that context, `qwen3.5:9b` with the default **f16** KV cache under flash attention **closes the
+verdict array early** under temperature 0 — a *silent* tail-drop (e.g. 27/34 verdicts,
+`truncated=0`, no error), which the caller's fail-closed rule then turns into over-exclusion of the
+batch tail. This is strictly worse than a loud failure. Quantizing the KV cache to **q8_0** removes
+the instability entirely.
+
+**Empirical evidence (T13, 5070, verified against a throwaway daemon at `num_ctx=14336`, 3
+consecutive runs, byte-identical):**
+
+| config | 21-batch | 34-batch | 60-batch | GPU / VRAM | 34-latency |
+|---|---|---|---|---|---|
+| flash **on**, **f16** KV | 17/21 ✗ | 27/34 ✗ | tail-drop ✗ | 100% GPU | ~15–28 s |
+| flash **off**, f16 KV | 21/21 ✓ | complete | complete | **74% CPU** offload | ~500 s ✗ |
+| flash **off**, q8_0 KV | — | — | — | **segfault on load** | — |
+| flash **on**, **q8_0** KV | **21/21 ✓** | **34/34 ✓** | **60/60 ✓** | **100% GPU, ~4 GB free** | **~22 s ✓** |
+
+The winning row is the binding above. Two hard facts it rests on:
+
+1. **`OLLAMA_FLASH_ATTENTION=1` is mandatory, not optional.** llama.cpp refuses V-cache
+   quantization without flash attention: `llama_init_from_model: V cache quantization requires
+   flash_attn` → the server segfaults on model load. So "flash-off + q8_0" is physically
+   impossible; q8_0 forces flash on. (The box already ran flash `auto`→on, so this only pins it.)
+2. **The tail-drop was the f16 KV cache, not flash attention itself** (an earlier T13 hypothesis
+   blamed flash). Same flash-on setting, only the KV dtype changes f16→q8_0, and completeness goes
+   from 27/34 to 34/34. Flash-**off** is complete but CPU-offloads at 14336 ctx (the non-flash
+   attention compute buffer no longer fits the 12 GB card → 74% CPU → ~500 s), so it is not a
+   usable option on this hardware.
+
+**Host-wide scope / safety.** This affects every model + transform on the box, not just
+opinion-gate. It is safe: the other transforms use small contexts (their KV cache is a few MiB
+either way) and q8_0 KV is an imperceptible quality change for these extraction tasks.
+
+### per-request `flash_attn` / KV type is IGNORED by Ollama 0.30.7 (why this is a host binding)
+
+Ollama 0.30.7 does **not** honor `options.flash_attn` (or a per-request KV cache type) on
+`/api/generate` — the runner is launched from the **daemon-level** env (`--flash-attn`,
+`--cache-type-k/v`) once per model load, and per-request overrides are dropped. That is why the fix
+must live on the `ollama.service` unit and cannot be a `Transform` field or an `OllamaClient`
+option. If a future Ollama exposes per-request KV/attention control, this could move into TTS.

@@ -2,6 +2,28 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
+## From T13 — Ollama host bindings that large-context transforms depend on
+- **q8_0 KV cache is a HOST binding, required for large `opinion-gate` batches.** T12's computed
+  `num_ctx` (14144) was necessary but not sufficient: at that context, `qwen3.5:9b` with the
+  default **f16** KV cache under flash attention *silently drops the tail* of the verdict array
+  (e.g. 27/34, `truncated=0`, no error) — worse than a loud 422, because the caller fail-closed
+  rule then over-excludes the tail. Fixed by `OLLAMA_KV_CACHE_TYPE=q8_0` (+ `OLLAMA_FLASH_ATTENTION=1`,
+  which q8_0 requires) on the `ollama.service` unit — see `deploy/ollama.service.d/flash-attn.conf`,
+  `docs/models.md`, `deploy/README.md` §3a. **Any future transform with a large `input_budget`
+  (i.e. a big computed `num_ctx`) inherits this dependency** — verify id-completeness at volume on
+  real hardware, don't trust a passing FakeLLM suite.
+- **Per-request `flash_attn` / KV-cache-type is IGNORED by Ollama 0.30.7.** The runner reads these
+  from daemon-level env once per model load; `options.flash_attn` on `/api/generate` is dropped.
+  So attention/KV knobs cannot live in a `Transform` or `OllamaClient` — they are host config. If a
+  future Ollama exposes per-request control, the q8_0 binding could move into TTS.
+- **The tail-drop was the f16 KV cache, NOT flash attention.** An earlier T13 hypothesis blamed
+  flash attention (flash-off *was* complete). But flash-off CPU-offloads at 14336 ctx on the 12 GB
+  card (the non-flash attention compute buffer doesn't fit → 74% CPU → ~500 s), and flash-off +
+  q8_0 segfaults (`V cache quantization requires flash_attn`). The real fix keeps flash **on** and
+  quantizes the KV cache. Don't re-litigate flash-off; it's a dead end on this hardware.
+- **Per-story `opinion-gate` calls were REJECTED (product owner, T13).** Latency × volume is
+  unacceptable for a cron gate. Batch classification stays the contract.
+
 ## From T10 — Brickfeed request set closed out
 - **`opinion-gate` shipped under ADR-0007.** The product owner amended §1's blanket
   "no safety-relevant classification" into a *conditional* exclusion
