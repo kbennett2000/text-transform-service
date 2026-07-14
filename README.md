@@ -1,323 +1,151 @@
+![text-transform-service — turn text into predictable JSON, locally](docs/assets/banner.png)
+
 # text-transform-service
 
-A small, self-hosted HTTP service exposing named **text → transform → JSON** operations
-backed by local LLM inference (Ollama) with **constrained decoding**. LAN-only,
-credential-free by default, single-GPU. It is **not** a general LLM gateway.
+**Messy text in → tidy, predictable data out — using an AI model that runs entirely on your own computer.
+No cloud, no accounts, nothing leaves your machine.**
 
-Consumers: **Brickfeed News** (`image-prompt`) and the **Scriptorium** bakery
-(`cast-mentions`, `cast-canonicalize`, `scene-update`, `illustration-prompt`).
+> 🧑‍💻 **Want to build on it?** → [Developer guide](docs/for-developers.md)
+> 🤖 **You're an AI agent?** → [Dense reference](docs/ai-reference.md)
+>
+> Everyone else — read on. This page is written to be understood without any special background.
 
-See `text-transform-service-DESIGN.md` for the full design and `text-transform-service-BUILD-PLAN.md`
-for the cycle-by-cycle build plan. Decisions are recorded as ADRs in [`docs/adr/`](docs/adr/).
+---
 
-> **Status:** Cycle T7 (ops hardening) — the service is **feature-complete for M1**, pending the
-> human systemd deploy. T7 adds `GET /v1/transforms` (registry listing), optional shared-secret
-> **auth** (`X-Transform-Key`, off by default), structured **per-request JSON logging** with an
-> `X-Request-Id` header, and a committed systemd unit under [`deploy/`](deploy/). All transforms
-> shipped earlier: `image-prompt` (T4, Brickfeed), `cast-mentions` + `cast-canonicalize` (T5) and
-> `scene-update` + `illustration-prompt` (T6) — **every Scriptorium bake transform**, plus the
-> soft-validator `meta.warnings` mechanism (see below). The pipeline runs against the model with
-> **schema-constrained decoding**; single in-flight generation is serialized (queue → `503 busy` on
-> timeout); `POST /v1/models/unload` frees VRAM. See [`docs/models.md`](docs/models.md) for the
-> resolved model bindings and two Ollama-behaviour findings that shaped the client.
+## What is this?
 
-## API summary
+It's a small tool that takes ordinary text — a news article, a page from a book — and hands it back to you
+as **neat, structured data** (a format called JSON) that a program can rely on.
 
-| Method + path | Auth | Purpose |
-|---|---|---|
-| `GET /health` | never | Service + Ollama status; never 500s |
-| `GET /v1/transforms` | when enabled | List registered transforms + their JSON Schemas |
-| `POST /v1/transform/{name}` | when enabled | Run a named transform: text → schema-constrained JSON |
-| `POST /v1/models/unload` | when enabled | Free model VRAM (`{"model": "..."}` or `{}` for all) |
+The clever part: it does this using an **AI language model that runs on your own machine**. You are not
+sending your text to a company's servers, you don't need an account or an API key, and it keeps working
+even with the internet unplugged.
 
-Auth is off by default (LAN posture) and enabled by setting `TRANSFORM_API_KEY` — see
-[Authentication](#authentication). Every response carries an `X-Request-Id` header, and each
-`/v1/*` request is logged as one structured JSON line — see [Operability](#operability).
+It's a focused building block, not a chat app. It was built to power two larger projects — a news site
+(*Brickfeed*) and an illustrated-book maker (*Scriptorium*) — so it does a handful of specific jobs
+extremely reliably rather than trying to do everything.
 
-## Requirements
+## What does it do?
 
-- Python 3.12 (managed by [uv](https://docs.astral.sh/uv/))
-- [Ollama](https://ollama.com/) running locally (default `http://127.0.0.1:11434`)
+You give it some text and the name of a **transform** — a specific job you want done. It gives you back a
+clean, predictable result. For example, the *image-prompt* transform turns a news story into a short
+description you could hand to an image generator:
 
-## Run
+> **In:**  “MERIDAN — A magnitude 6.4 earthquake toppled the town's clock tower at dawn…”
+>
+> **Out:**  `{ "prompt": "A fallen brick clock tower lies shattered on a cold town square at dawn" }`
 
-```bash
-uv sync          # install deps into .venv
-make dev         # serve on 0.0.0.0:8712 with auto-reload
-```
+Other transforms read a book page and list the characters mentioned, or track where and when each scene
+takes place. Each one always answers in the **same shape**, every time — so whatever you build on top of
+it never has to guess. (The full list lives in the [developer guide](docs/for-developers.md).)
 
-Then:
+## Why would I use it?
 
-```bash
-curl -s localhost:8712/health | jq
-```
+- **It's private.** The AI runs on your computer. Your text isn't uploaded anywhere.
+- **It's predictable.** Every answer comes back in a fixed, reliable shape — not a rambling paragraph.
+- **There's nothing to pay for.** No subscriptions, no per-request fees, no API keys to manage.
+- **It's yours.** It's a small, open codebase you can read, run, and change however you like.
 
-`/health` reports service and Ollama status. It never fails: if Ollama is down it
-returns `200` with `status: "degraded"` rather than erroring.
+## Set it up
 
-```json
-{
-  "status": "ok",
-  "ollama_reachable": true,
-  "models_loaded": ["qwen3.5:9b"],
-  "uptime_s": 8641
-}
-```
+You'll install two free tools, download an AI model, and run one command. Pick your operating system below.
+It's the same three ingredients everywhere:
 
-## Transforms — `POST /v1/transform/{name}`
+1. **[Ollama](https://ollama.com/download)** — runs the AI model on your machine.
+2. **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — sets up and runs this project.
+3. **A model** — start with the small one (`qwen3.5:2b`) so it works on an ordinary laptop.
 
-Send text; get back schema-constrained JSON plus request metadata.
+> 💡 The small model is perfect for trying it out. The project's "real" jobs use a bigger model
+> (`qwen3.5:9b`) that's sharper but needs a proper graphics card (GPU). Start small; you can switch later.
+
+### Windows
+
+1. Install **Ollama** from [ollama.com/download](https://ollama.com/download) and open it (it runs quietly
+   in the background).
+2. Install **uv** — open **PowerShell** and paste:
+   ```powershell
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+3. Download the model — in the same window:
+   ```powershell
+   ollama pull qwen3.5:2b
+   ```
+4. Download this project and start it:
+   ```powershell
+   git clone https://github.com/kbennett2000/text-transform-service.git
+   cd text-transform-service
+   uv sync
+   uv run uvicorn tts.app:app --host 0.0.0.0 --port 8712 --reload
+   ```
+5. Check it's alive — open <http://localhost:8712/health> in your browser. You should see `"status": "ok"`.
+
+### Mac
+
+1. Install **Ollama** from [ollama.com/download](https://ollama.com/download) (or `brew install ollama`)
+   and launch it.
+2. Install **uv** — open **Terminal** and paste:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+3. Download the model:
+   ```bash
+   ollama pull qwen3.5:2b
+   ```
+4. Download this project and start it:
+   ```bash
+   git clone https://github.com/kbennett2000/text-transform-service.git
+   cd text-transform-service
+   uv sync
+   make dev
+   ```
+5. Check it's alive — open <http://localhost:8712/health>. You should see `"status": "ok"`.
+
+### Linux
+
+1. Install **Ollama**:
+   ```bash
+   curl -fsSL https://ollama.com/install.sh | sh
+   ```
+2. Install **uv**:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+3. Download the model:
+   ```bash
+   ollama pull qwen3.5:2b
+   ```
+4. Download this project and start it:
+   ```bash
+   git clone https://github.com/kbennett2000/text-transform-service.git
+   cd text-transform-service
+   uv sync
+   make dev
+   ```
+5. Check it's alive:
+   ```bash
+   curl -s localhost:8712/health
+   ```
+   You should see `"status": "ok"`.
+
+### Now try it
+
+With the service running, send it a bit of text (the small `qwen3.5:2b` model powers the demo `echo`
+transform):
 
 ```bash
 curl -s localhost:8712/v1/transform/echo \
   -H 'content-type: application/json' \
-  -d '{"text": "First sentence. Second sentence.", "options": {}}' | jq
+  -d '{"text": "First sentence. Second sentence."}'
 ```
 
-`options` is transform-specific (validated against the transform's `options_schema`);
-omitting it means `{}`. A success is `200`:
+That's the whole idea: text in, predictable data out. To do the real jobs (news image prompts, book
+character extraction, and so on), see the guide below.
 
-```json
-{
-  "output": { "echo": "First sentence." },
-  "meta": {
-    "transform": "echo", "transform_version": "0.1.0", "model": "qwen3.5:2b",
-    "input_tokens_est": 6, "truncated": false, "attempts": 1,
-    "latency_ms": 3967, "queued_ms": 0
-  }
-}
-```
+## Go deeper
 
-Errors always use `{"error": {"code": "...", "message": "...", "detail": {...}}}`
-(DESIGN §4): `400 bad_request`/`bad_options`, `401 unauthorized` (auth enabled, key
-missing/wrong), `404 unknown_transform`, `413 over_budget`, `422 validation_failed`
-(generation failed validators after retries), `503 busy`/`model_unavailable`, `500 internal`.
-**Error codes are API — a change is a breaking change.**
-
-### Available transforms
-
-- **`image-prompt`** (production; DESIGN §7.1) — Brickfeed's workload. Send a news story;
-  get back one concise, concrete image-generation *subject* prompt (`{"prompt": "..."}`,
-  8–60 words, one line, no style/medium/camera words — those are added caller-side). Input
-  over the 3000 est-token budget is truncated on paragraph boundaries (`lede_first_n`,
-  `meta.truncated: true`). Bound to `qwen3.5:9b`. `options` is `{}`.
-
-  ```bash
-  curl -s localhost:8712/v1/transform/image-prompt \
-    -H 'content-type: application/json' \
-    -d '{"text": "MERIDAN — A magnitude 6.4 earthquake toppled the town clock tower..."}' | jq
-  # {"output": {"prompt": "A fallen brick clock tower lies shattered on a cold town square at dawn..."}, "meta": {...}}
-  ```
-
-- **`cast-mentions`** (production; DESIGN §7.2) — Scriptorium P1. Send one book page; get back the
-  characters mentioned on it with **verbatim** physical descriptors
-  (`{"mentions": [{"name", "aliases", "descriptors", "is_person"}, …]}`). Called once per page,
-  parallel-safe; the caller reduces mentions across pages. Budget is **`reject`**: a page over the
-  1600 est-token budget returns `413 over_budget` (a paginator bug — fail loudly, never truncate).
-  Bound to `qwen3.5:9b`. `options` is `{}`.
-
-  ```bash
-  curl -s localhost:8712/v1/transform/cast-mentions \
-    -H 'content-type: application/json' \
-    -d '{"text": "The Time Traveller stood before us, his face ghastly pale..."}' | jq
-  # {"output": {"mentions": [{"name": "the Time Traveller", "descriptors": ["his face ghastly pale"], ...}]}, "meta": {...}}
-  ```
-
-- **`cast-canonicalize`** (production; DESIGN §7.3) — Scriptorium P2. Called once per major
-  character. The evidence rides in `options` (`{"name", "descriptors", "aliases"?, "era"?, "genre"?}`);
-  `text` is empty. Returns one paintable canonical entry
-  (`{"visual_description", "one_line", "tags"}`) — using only the evidence, choosing plain
-  era-appropriate defaults where it is silent. Bound to `qwen3.5:9b`. Missing a required option →
-  `400 bad_options`.
-
-  ```bash
-  curl -s localhost:8712/v1/transform/cast-canonicalize \
-    -H 'content-type: application/json' \
-    -d '{"text": "", "options": {"name": "the Time Traveller", "descriptors": ["his face was ghastly pale", "he walked with a limp"]}}' | jq
-  # {"output": {"one_line": "A limping, pale Victorian gentleman...", "visual_description": "...", "tags": [...]}, "meta": {...}}
-  ```
-
-- **`scene-update`** (production; DESIGN §7.4) — Scriptorium P3. Called once per page **strictly in
-  order**: send the page plus the previous page's ledger, get back the updated rolling scene ledger
-  and a per-page selection signal
-  (`{"location", "time_of_day", "atmosphere", "present", "scene_changed", "visual_salience", "best_visual_beat", "carry_notes"}`).
-  `options` is `{"prior_ledger": <object|null>, "cast_names": [...], "era"?}` — `prior_ledger` is `null`
-  on page 1, then each call's ledger is threaded into the next. Budget is **`reject`** (page over the
-  1600 est-token budget → `413 over_budget`). Bound to `qwen3.5:9b`.
-
-  ```bash
-  curl -s localhost:8712/v1/transform/scene-update \
-    -H 'content-type: application/json' \
-    -d '{"text": "The Time Traveller sat by the fire, turning the little brass machine...", "options": {"prior_ledger": null, "cast_names": ["the Time Traveller", "Filby"], "era": "1890s"}}' | jq
-  # {"output": {"location": "the Time Traveller's smoking-room", "visual_salience": 0.65, "best_visual_beat": "...", ...}, "meta": {...}}
-  ```
-
-- **`illustration-prompt`** (production; DESIGN §7.5) — Scriptorium P5. Called once per **selected** page.
-  Send the page, its ledger, and the cast entries for characters present; get back one neutral SDXL
-  *subject* prompt weaving each depicted character's visual identifiers in
-  (`{"prompt", "depicted", "shot", "avoid"?}`). `options` is
-  `{"ledger": <object>, "cast": [{"name", "one_line"}, …], "era"?}`. Style/medium words are caller-side;
-  their appearance is drift (`422`). The `depicted ⊆ cast` check is a **soft** validator — a stray name
-  is recorded to `meta.warnings` (below), not a failure. Bound to `qwen3.5:9b`.
-
-  ```bash
-  curl -s localhost:8712/v1/transform/illustration-prompt \
-    -H 'content-type: application/json' \
-    -d '{"text": "...page...", "options": {"ledger": {"best_visual_beat": "The model machine vanishes.", "location": "the smoking-room"}, "cast": [{"name": "the Time Traveller", "one_line": "a pale, grey-haired Victorian gentleman"}]}}' | jq
-  # {"output": {"prompt": "...", "depicted": ["the Time Traveller"], "shot": "medium"}, "meta": {...}}
-  ```
-
-- **`echo`** — a **dev-only** transform (registered only when `TTS_ENV=dev`) that proves the
-  pipeline plumbing against a real model. Not a real workload.
-
-Output is **schema-constrained**: the transform's `output_schema` is passed to Ollama as a
-grammar (`format`) *and* re-validated after generation; on validator failure the pipeline
-retries with a temperature bump before returning `422`. Qwen3.5 "thinking" is disabled
-(`think: false`) — it is pure latency for these extraction transforms.
-
-### Soft warnings — `meta.warnings`
-
-Most validators are **hard**: a violation retries and ultimately returns `422`. A few checks are
-advisory — a mild drift the caller may want to know about but which shouldn't fail the request
-(e.g. `illustration-prompt`'s `depicted ⊆ cast` check). These are **soft validators**: they add a
-string to `meta.warnings` and the request still succeeds with `200`.
-
-`meta.warnings` is **present only when a soft finding fired** — it is absent on the common (clean)
-path, so the success `meta` shape is otherwise exactly as shown above. Consumers should read it
-defensively (`meta.get("warnings")`), not assume the key exists.
-
-```json
-"meta": {
-  "transform": "illustration-prompt", "...": "...",
-  "warnings": ["depicted not in cast: ['Filby']"]
-}
-```
-
-## Listing transforms — `GET /v1/transforms`
-
-Serializes the registry so a caller can discover what is available and validate against the
-schemas. Each entry carries the caller-facing fields plus both JSON Schemas; the internal
-prompt template and Python validators are never exposed.
-
-```bash
-curl -s localhost:8712/v1/transforms | jq
-# { "transforms": [
-#   { "name": "cast-canonicalize", "version": "0.1.0", "model": "qwen3.5:9b",
-#     "input_budget": 1200, "over_budget": "truncate",
-#     "options_schema": { ... }, "output_schema": { ... } },
-#   ...
-# ] }
-```
-
-## Unloading models — `POST /v1/models/unload`
-
-Frees model VRAM (the endpoint the Scriptorium orchestrator calls before a render phase).
-Body `{"model": "qwen3.5:9b"}` targets one; `{}` unloads everything currently loaded. Each
-target is unloaded (`keep_alive: 0`) and the response reports models confirmed gone via
-`/api/ps`:
-
-```bash
-curl -s -X POST localhost:8712/v1/models/unload \
-  -H 'content-type: application/json' -d '{}' | jq
-# {"unloaded": ["qwen3.5:2b"]}
-```
-
-## Configuration (env, all optional)
-
-| Var | Default | Meaning |
-|---|---|---|
-| `TTS_PORT` | `8712` | Bind port |
-| `TTS_HOST` | `0.0.0.0` | LAN bind |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama runtime |
-| `OLLAMA_KEEP_ALIVE` | `5m` | Passed on every generate |
-| `TRANSFORM_API_KEY` | unset | Enables shared-secret auth when set |
-| `QUEUE_WAIT_S` | `90` | Generation queue timeout |
-| `TTS_LOG_LEVEL` | `INFO` | Log level |
-| `TTS_ENV` | `prod` | `dev` enables dev-only transforms (`echo`) |
-
-(All of the above except `TTS_ENV` are the DESIGN §9 table; `TTS_ENV` is a T2 addition
-for the dev gate.)
-
-**Model bindings** (see [`docs/models.md`](docs/models.md)): the default per-transform model
-is `qwen3.5:9b`; the fast test/CI model (and `echo`'s binding) is `qwen3.5:2b`. These were
-rebound in T3 from the absent DESIGN §2 tags (`qwen3:8b` / `qwen3:0.6b`) to the same weight
-classes in the installed `qwen3.5` family. `GET /v1/transforms` reports each transform's
-actual binding.
-
-## Authentication
-
-Auth is **optional and off by default** (LAN posture, ADR-0003). Set `TRANSFORM_API_KEY` and
-every `/v1/*` request must then carry that value in an `X-Transform-Key` header; `/health` is
-always open. A missing or wrong key is `401 unauthorized` in the standard error envelope.
-
-```bash
-export TRANSFORM_API_KEY=change-me
-curl -s localhost:8712/v1/transforms                              # -> 401 unauthorized
-curl -s localhost:8712/v1/transforms -H 'X-Transform-Key: change-me'   # -> 200
-curl -s localhost:8712/health                                    # -> 200 (never gated)
-```
-
-Leaving `TRANSFORM_API_KEY` unset disables auth entirely — no header required.
-
-## Operability
-
-Every response carries an `X-Request-Id` header (uuid4 hex short). Each `/v1/*` request is
-logged as exactly one structured JSON line on the `tts.request` logger (DESIGN §9); `/health`
-is intentionally excluded (it is polled frequently). Fields:
-`ts, request_id, transform, status`, plus `attempts, input_tokens_est, truncated, queued_ms,
-latency_ms` on a completed pipeline run and `error_code` on failures.
-
-```json
-{"ts": "2026-07-13T18:22:04.117+00:00", "request_id": "9f3a1c07", "transform": "scene-update",
- "status": 200, "attempts": 1, "input_tokens_est": 812, "truncated": false,
- "queued_ms": 0, "latency_ms": 7434}
-```
-
-Log level comes from `TTS_LOG_LEVEL`. Under systemd the lines land in `journalctl -u
-text-transform-service`. Deployment steps: [`deploy/README.md`](deploy/README.md).
-
-## Adding a transform
-
-A transform is a Python module in [`src/tts/transforms/`](src/tts/transforms/) that builds a
-frozen `Transform` (see [`registry.py`](src/tts/registry.py)). The 8-step recipe:
-
-1. **Module** — add `src/tts/transforms/<name>.py` with a `build_<name>() -> Transform`.
-2. **Schemas** — write the `output_schema` (JSON Schema, passed to Ollama as a grammar *and*
-   re-validated) and the `options_schema` (validated → `400 bad_options` on failure).
-3. **Template** — write the DESIGN §7 prompt verbatim in `SYSTEM: … USER: …` form; `render_messages`
-   splits it and substitutes `{common framing}`. Split any >100-char line into adjacent literals
-   (no newline at the join → byte-identical render) to satisfy ruff without a `version` bump.
-4. **Validators** — compose from [`validators.py`](src/tts/validators.py) (e.g. `word_range`,
-   `banned_substrings`, `no_empty_strings`). A validator returns a reason string to fail (retry →
-   `422`), `None` to pass, or a `"warn:<reason>"` string for a non-fatal `meta.warnings` entry. An
-   options-aware validator sets `wants_options = True` and is called `validator(output, options)`.
-5. **Register** — add `register(build_<name>())` in
-   [`transforms/__init__.py`](src/tts/transforms/__init__.py) (`echo` stays dev-gated; production
-   transforms register unconditionally).
-6. **Fixtures** — add realistic inputs under `tests/fixtures/<domain>/` (public-domain text).
-7. **Unit tests** — drive the real `build_<name>()` with `FakeLLMClient` (schema-retry, budget,
-   validators, options shape). **Never assert exact model wording** — schema/shape/bounds only.
-8. **GPU test** — add a `@pytest.mark.gpu` case in [`tests/test_gpu.py`](tests/test_gpu.py) that runs
-   the real binding through `run_transform` and prints outputs for the CYCLE-LOG eyeball.
-
-## Development / testing
-
-```bash
-make test        # non-GPU suite (Ollama mocked via FakeLLM) — runs anywhere
-make test-gpu    # GPU suite (@pytest.mark.gpu) — run only on the 5070 with Ollama up
-make lint        # ruff
-make dev         # uvicorn --reload on :8712 (TTS_ENV=dev, echo enabled)
-```
-
-All non-GPU tests use `FakeLLMClient` — no network, no model. Real generation is only exercised
-behind `-m gpu`, which asserts schema/mechanics, never wording.
-
-**Fixtures.** `tests/fixtures/book/` holds two sets of *The Time Machine* (PG #35) pages: T5's
-per-case excerpts `0[1-4]_*.txt` (non-consecutive, chosen per character) and T6's **3 consecutive**
-pages `page_[abc].txt` (for `scene-update` threading). Any test globbing `book/*.txt` must scope its
-pattern (the T5 cast-mentions GPU test globs `0*.txt`) so the two sets don't collide.
-
-**Options-aware validators.** Most validators take only the parsed output. One that needs the
-request options (e.g. `illustration-prompt`'s `depicted ⊆ cast` soft check) opts in with a
-`wants_options = True` marker on the callable; the pipeline then calls it `validator(output,
-options)`. Reuse the marker rather than widening the `Validator` type for every check.
+- 🧑‍💻 **[Developer guide](docs/for-developers.md)** — every transform, the full API, configuration,
+  authentication, and how to add your own transform.
+- 🤖 **[AI reference](docs/ai-reference.md)** — the whole service at maximum density, for agents.
+- 📐 **[Design doc](text-transform-service-DESIGN.md)** and **[build plan](text-transform-service-BUILD-PLAN.md)** — how and why it was built.
+- 🧩 **[Architecture decisions](docs/adr/)** and **[model notes](docs/models.md)** — the reasoning behind the choices.
+- 🚀 **[Deployment](deploy/README.md)** — running it as an always-on service under systemd.
