@@ -7,6 +7,10 @@ running. **This is the human's step** — the executor prepares `deploy/`; you r
 Prerequisites: [uv](https://docs.astral.sh/uv/) installed, Ollama running, the bound models
 pulled (`qwen3.5:9b`, and `qwen3.5:2b` for dev/echo — see [`../docs/models.md`](../docs/models.md)).
 
+**Redeploying an already-installed box** (steps 1–2 + verify, in one command): run
+[`redeploy.sh`](redeploy.sh) as the service user (not root) — it pulls master, rsyncs to `/opt`,
+`uv sync`s as the invoking account, restarts the unit, and prints the live transform list.
+
 ## 1. Copy the tree to `/opt`
 
 ```bash
