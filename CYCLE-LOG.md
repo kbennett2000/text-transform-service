@@ -1,5 +1,21 @@
 # Cycle Log
 
+## Ops — redeploy after T10; live registry current, `redeploy.sh` added (2026-07-13)
+
+The deployed `/opt/text-transform-service` was stale (pre-T9/T10): the live registry served only
+`cast-canonicalize`, `cast-mentions`, `illustration-prompt`, `image-prompt`, `scene-update`.
+Redeployed current merged `master` (`988a109`, PR #11) per `deploy/README.md` — rsync to `/opt`,
+`uv sync` as the service user (`kb`, never root), `systemctl restart`. **Verified live**: unit
+active; `/v1/transforms` now lists all eight — the five above plus `opinion-gate`,
+`opinion-image-brief`, `story-cover` (`echo` correctly absent, dev-gated). `/health` = `degraded`
+(`ollama_reachable:false`) — Ollama not running on the box; documented-correct (never 500s), not a
+redeploy fault; `→ ok` awaits a human starting Ollama.
+
+**Added** `deploy/redeploy.sh` — idempotent one-command redeploy (pull → rsync → `uv sync` →
+restart → print live transform list). Refuses to run as root (guards the `uv sync` 203/EXEC trap
+from README §2); sudo is invoked internally for rsync + restart. One-line pointer added to
+`deploy/README.md`. No transform code or templates changed; no version bumps.
+
 ## T10 — Brickfeed `opinion-gate` (under ADR-0007) + `opinion-image-brief` (2026-07-14)
 
 Second half of the Brickfeed request pair (`docs/requests/brickfeed-2026-07.md` §2 + §4).
