@@ -2,6 +2,44 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
+## From T9 — for T10 (Brickfeed opinion pair) and the product owner
+- **`opinion-gate` is HELD out of the §1 charter — needs a product-owner call, not a build.**
+  The Brickfeed request (`docs/requests/brickfeed-2026-07.md` §2) is a **fail-closed,
+  safety-load-bearing** topic gate (exclude tragedy/violence/death; if uncertain, exclude). That
+  is "safety-relevant classification", which DESIGN §1 line 9 + system-overview §5 exclude.
+  Building it on TTS would amend the charter → requires a new/updated ADR signed by the product
+  owner (Browser Claude / Kris), **not** an executor decision. Until then the incumbent Claude
+  gate stays live. If it is ever approved: bound the `verdicts` array (`maxItems`) and the inner
+  `reason` (add a `minLength`), keep `over_budget=reject`→413 (the request's own choice — never
+  silently drop candidates), and let the *caller* implement fail-closed by treating any 4xx/5xx
+  as "all excluded" (TTS itself only fails loudly per §4; it must not swallow errors into a
+  default verdict).
+- **⚠️ T10 warning — `opinion-piece` likely trips the SAME charter line, differently.** Its
+  requested `body` is `minLength 200` with a `[minWords, maxWords]` range up to **2000 words**
+  in a **persona's satirical voice** — i.e. long-form *voiced* generation, which DESIGN §1
+  ("not for long-form voiced generation") excludes just as explicitly as safety classification.
+  **Flag it in T10 plan mode before building**; it may be a second HELD/escalate, not a build.
+  `opinion-image-brief` (the other half of T10) is fine and in-charter.
+- **Reuse T9's subject-neutral set for `opinion-image-brief`.** Its `imagePrompt` (30–400) and
+  `caption` (15–160) bounds are **identical** to `story-cover`'s. Reuse the same validators —
+  `banned_substrings(field, ["**","##","http","\n"])` on imagePrompt+caption plus
+  `word_range("imagePrompt", 8, 60)` — and the same "no style/medium/toy-brick words" template
+  rules (ADR-0004). Do **not** reuse the existing `image-prompt` transform (the request forbids
+  it; different schema).
+- **`story-cover` truncation is a structural no-op.** `over_budget=truncate`/`head` only cut on
+  blank-line paragraph boundaries (`budget.py` `_keep_head` returns unchanged for a
+  single-paragraph input). The story-cover input (title/publisher/URL on consecutive lines) is
+  one paragraph, so an over-budget input passes through whole (`truncated=False`) and is never
+  rejected. Acceptable here (long titles are harmless), but any future single-paragraph
+  transform that actually *needs* to shed tokens must not rely on `head`/`lede_first_n`.
+- **New fixture domain `tests/fixtures/story_cover/`** — 5 synthetic 3-line `.txt` inputs. The
+  T9 GPU test globs `story_cover/*.txt` (scoped, like the T5/T6 `book/` globs).
+- **Pre-existing GPU flake to be aware of:** `test_cast_canonicalize_fixture_schema_valid_and_printed`
+  (T5) asserts the model returns **2–4 sentences**; `qwen3.5:9b` occasionally emits a single
+  (comma-spliced) sentence and the test fails, then passes on re-run. This is exactly the
+  "never assert wording/shape-of-prose" hazard — a future cycle that owns T5 could loosen it to
+  `>=1 sentence` or drop the count, but it is **out of T9's scope fence** (untouched here).
+
 ## From T7 — for later cycles / the human deploy
 - **TTS is feature-complete for M1, pending the human systemd deploy.** All transforms + all ops pieces
   (listing, auth, logging, systemd unit) shipped. The one open acceptance box is the human running the

@@ -38,8 +38,11 @@ Record the exact resolved tags (`ollama list`) in `docs/models.md` during T1. If
 | T6 | `scene-update` + `illustration-prompt` | T5 | M |
 | T7 | Ops hardening: listing, unload, auth, logging, systemd, README | T3 | S |
 | T8 | Brickfeed bench harness | T4 | Deferred — do not build unless dispatched |
+| T9 | Brickfeed `story-cover` (shipped); `opinion-gate` HELD out of §1 charter | T4 | S |
+| T10 | Brickfeed `opinion-piece` + `opinion-image-brief` (charter-check `opinion-piece` first) | T9 | M |
 
 T4, T5/T6, and T7 are independent of each other after T3; dispatch order above is the default.
+T9/T10 build the Brickfeed request pairs from `docs/requests/brickfeed-2026-07.md`.
 
 ---
 
@@ -191,6 +194,23 @@ T4, T5/T6, and T7 are independent of each other after T3; dispatch order above i
 ## Cycle T8 — Brickfeed bench harness (DEFERRED — build only when explicitly dispatched)
 
 Per DESIGN §11 / v1 §9: `bench/` CLI that takes ~30 story files, runs both providers (local via this service; Haiku via Brickfeed's existing provider code or a thin re-implementation reading `ANTHROPIC_API_KEY`), emits paired prompts as JSONL + an HTML side-by-side sheet; image-set generation is manual/scripted separately. Pass criteria per v1 §9. Not scheduled; Scriptorium does not depend on it.
+
+---
+
+## Cycle T9 — Brickfeed `story-cover`; `opinion-gate` HELD (SHIPPED 2026-07-13)
+
+First of the Brickfeed-requested transforms from `docs/requests/brickfeed-2026-07.md` (copied in pre-dispatch, provenance `brickfeed@40acb90`). Dispatched as `story-cover` + `opinion-gate`; only `story-cover` shipped.
+
+**In scope (done):** `src/tts/transforms/story_cover.py` (`story-cover`, v0.1.0, `qwen3.5:9b`) — five-field cover bundle (headline/description/imagePrompt/category-enum/caption), `options_schema {}`, `input_budget=1200` truncate/head, subject-neutral validators mirroring `image-prompt`; 5 synthetic fixtures under `tests/fixtures/story_cover/`; 7 FakeLLM unit tests; a T9 GPU section. Records: this section, the §0.2 index row, CYCLE-LOG T9, NOTES-FOR-NEXT-CYCLES.
+
+**Out of scope / not built:** `opinion-gate` — **HELD**. Its requested behavior (fail-closed, safety-load-bearing exclusion of tragedy/violence/death) is "safety-relevant classification", excluded by DESIGN §1 line 9. Building it amends the charter → a product-owner ADR call, escalated in the plan-mode decision + CYCLE-LOG + NOTES, not an executor build. Also out: T10's pair, provider/bench code, edits to existing transforms.
+
+**Reconciliations (binding contract, not the request doc):** `category` gains `"type":"string"`; `imagePrompt`/`caption` held subject-neutral per ADR-0004 (request's "cartoon"/"playful/cartoonish" style stripped; toy-brick stays caller-side); `word_range(8,60)` on imagePrompt; truncation is a structural no-op on the single-paragraph input (never rejects). Full detail in the module docstring + CYCLE-LOG.
+
+**Acceptance**
+- [x] `make lint` clean; `make test` → 127 passed (120 prior + 7 new), 8 gpu deselected.
+- [x] `make test-gpu` on the 5070 green (`qwen3.5:9b`); story-cover outputs pasted into CYCLE-LOG for the eyeball (subject-neutral, no style leak).
+- [x] `opinion-gate` hold + charter escalation recorded (CYCLE-LOG + NOTES); no `opinion_gate.py` created.
 
 ---
 
