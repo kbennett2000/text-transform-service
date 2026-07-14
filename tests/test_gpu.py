@@ -557,10 +557,16 @@ async def test_opinion_gate_num_ctx_volume_batches(client, capsys, fixture_name,
     in the pipeline) and **id-set equality at volume** — the property that fails when generation
     truncates — plus the safety direction (every designed tragedy lands in the safe-outcome set;
     conservative extra exclusions are tolerated). The full verdict table is printed for the eyeball.
+
+    T13 note: id-set equality at this volume also depends on the **host-level q8_0 KV cache
+    binding** (``deploy/ollama.service.d/flash-attn.conf``; see ``docs/models.md``). With the
+    default f16 KV cache under flash attention, ``qwen3.5:9b`` silently drops the tail of the
+    verdict array at 14144 ctx and this assertion fails (27/34); q8_0 KV makes it complete. If this
+    test fails on id-set equality, check that the Ollama daemon carries that binding first.
     """
     transform = build_opinion_gate()
     assert transform.version == "0.3.0"
-    assert transform.num_ctx == 14144  # the T12 fix that lets these finish
+    assert transform.num_ctx == 14144  # T12 sizing; T13 q8_0 host binding makes it *complete*
 
     text = (_OPINION_GATE_FIXTURES / fixture_name).read_text(encoding="utf-8")
     candidates = json.loads(text)

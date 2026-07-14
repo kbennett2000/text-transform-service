@@ -60,6 +60,35 @@ When `TRANSFORM_API_KEY` is set, every `/v1/*` request must carry
 unset) to run keyless. All other config vars (`TTS_PORT`, `OLLAMA_URL`, `QUEUE_WAIT_S`,
 `TTS_LOG_LEVEL`, …) may also go in this file — see the config table in the top-level README.
 
+## 3a. Ollama host binding — required for large opinion-gate batches (cycle T13)
+
+`opinion-gate` classifies batches of up to ~100 candidates in one call, which needs a large
+context window. At that size, `qwen3.5:9b` with the default **f16** KV cache silently drops the
+tail of the verdict array (a completeness bug, not an error) — the caller's fail-closed rule then
+over-excludes those stories. Quantizing the KV cache to **q8_0** fixes it (and shrinks the KV
+cache, keeping the model 100% on-GPU). This is a **host-wide Ollama setting**, applied to the
+`ollama.service` unit via a drop-in — **not** a TTS config var. See
+[`../docs/models.md`](../docs/models.md) for the evidence.
+
+```bash
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo cp /opt/text-transform-service/deploy/ollama.service.d/flash-attn.conf \
+  /etc/systemd/system/ollama.service.d/flash-attn.conf
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+Verify both vars are live (and note `OLLAMA_FLASH_ATTENTION=1` is **mandatory** — llama.cpp
+refuses V-cache quantization without flash attention, segfaulting on load):
+
+```bash
+systemctl show ollama.service -p Environment   # -> OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0
+```
+
+This is safe for the other transforms (their contexts are tiny; q8_0 KV is imperceptible for these
+extraction tasks). Skipping it does not break startup, but large opinion-gate batches will
+silently return incomplete verdict sets.
+
 ## 4. Install and start the unit
 
 ```bash

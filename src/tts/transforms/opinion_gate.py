@@ -58,6 +58,16 @@ computed ``num_ctx`` (``input_budget + num_predict + 1024`` = **14144** here) so
 and the 5120-token output ceiling both fit. Version bumped because the observable behavior at
 volume changed (34-candidate batches now succeed). See the T12 CYCLE-LOG entry.
 
+T13 (2026-07-14) — no transform change; a **host-level Ollama binding**. The computed ``num_ctx``
+was necessary but not sufficient: at 14144 ctx, ``qwen3.5:9b`` with an *f16* KV cache under flash
+attention silently drops the tail of the verdict array (e.g. 27/34, no error) — worse than the
+loud 422 T12 fixed, since the caller's fail-closed rule then over-excludes the tail. The fix is a
+**q8_0 KV cache** on the Ollama daemon (``OLLAMA_KV_CACHE_TYPE=q8_0`` +
+``OLLAMA_FLASH_ATTENTION=1``, which q8_0 requires), which makes 21/34/60-candidate batches complete
+and stable. This cannot be a ``Transform`` field — Ollama 0.30.7 ignores per-request flash/KV
+options; it is set on ``ollama.service`` (see ``docs/models.md`` and ``deploy/README.md`` §3a).
+``version`` stays ``0.3.0`` because no transform contract or code changed. See the T13 CYCLE-LOG.
+
 id-completeness (one verdict per input id, each echoed exactly once) is not schema-enforceable —
 validators see the output and options, never the raw input text. The caller fail-closed rule
 (missing/duplicate id → exclude) covers the gap; the T10 GPU test checks id-set equality.

@@ -1,5 +1,97 @@
 # Cycle Log
 
+## T13 — `opinion-gate` batch completeness: q8_0 KV-cache host binding (2026-07-14)
+
+Mini-cycle, follow-on to T12. T12's `num_ctx` fix removed the loud **422** at 34-candidate volume,
+but live verification exposed a *deeper, silent* failure: at the computed `num_ctx=14144`,
+`qwen3.5:9b` with the default **f16** KV cache under flash attention **closes the verdict array
+early** under temp 0 — e.g. **27/34** verdicts, `truncated=0`, HTTP **200**, no error. The caller's
+fail-closed rule then maps the missing tail ids to *exclude*, so batches are silently over-excluded.
+This is **worse than the 422** (loud → silent) and it even regressed the previously-working
+21-batch (21/21 → 17/21 at 14144). **Root cause (confirmed live): the f16 KV cache, not flash
+attention.** Fix: **`OLLAMA_KV_CACHE_TYPE=q8_0`** on the Ollama daemon (a host binding, not TTS
+code). opinion-gate stays **0.3.0** — no transform contract or code changed. **Scope: the host-level
+Ollama binding + findings docs; opinion-gate version unchanged. No schema shapes, no other transform
+contracts, no error-code changes.**
+
+**Product-owner ruling (pre-decided branches).** Run the KV-quant test at 14336 ctx against a hard
+pass bar (100% GPU + ≥2 GB headroom; 21/34/60 complete with id-set equality; 34-batch ≤ ~90 s; 3
+consecutive stable runs). PASS → host binding; FAIL → cap `num_ctx=4096` + caller chunking ≤15.
+Per-story calls **rejected** (latency × volume unacceptable for a cron gate). **Result: PASS.**
+
+**Diagnosis (Phase A, live on the 5070, throwaway Ollama on an alt port, driven through TTS's own
+`OllamaClient` for a faithful prompt/schema/`num_ctx`).** Four configs at `num_ctx=14336`:
+
+| config | 21 | 34 | 60 | GPU / VRAM | 34-latency |
+|---|---|---|---|---|---|
+| flash **on**, **f16** KV (= prod today) | 17/21 ✗ | 27/34 ✗ | tail-drop ✗ | 100% GPU | ~15–28 s |
+| flash **off**, f16 KV | 21/21 ✓ | complete | complete | **74% CPU** (12/34 layers) | **~500 s** ✗ |
+| flash **off**, q8_0 KV | — | — | — | **segfault on load** | — |
+| flash **on**, **q8_0** KV | **21/21** | **34/34** | **60/60** | **100% GPU, ~4 GB free** | **~22 s** |
+
+The two constraints that force the answer:
+1. **`OLLAMA_FLASH_ATTENTION=1` is mandatory** — `llama_init_from_model: V cache quantization
+   requires flash_attn` → segfault. "flash-off + q8_0" (the ruling's literal config) is physically
+   impossible; q8_0 forces flash on. **Deviation from the ruling's wording, forced by llama.cpp;
+   the ruling's KV-quant *intent* and its pass bar are fully satisfied.**
+2. **flash-off is a dead end on this 12 GB card** — the non-flash attention compute buffer at 14336
+   ctx doesn't fit, so Ollama offloads 22/34 layers to CPU (74% CPU, ~500 s). This is the
+   "508 s" regime from the prior investigation; it is not VRAM-of-the-KV-cache but the attention
+   scratch buffer.
+
+So the tail-drop was **the f16 KV cache under flash attention**, not flash attention itself. Same
+flash-on setting, KV dtype f16→q8_0, and completeness goes 27/34 → 34/34.
+
+**3× stability (the flakiness guard — prior GPU suite passed then started tail-dropping with no
+config change).** flash-on + q8_0, three consecutive runs, **byte-identical**:
+
+```
+run1: [21] 21/21 20.1s  [34] 34/34 21.8s  [60] 60/60 37.2s
+run2: [21] 21/21 13.6s  [34] 34/34 22.1s  [60] 60/60 37.4s
+run3: [21] 21/21 13.5s  [34] 34/34 22.0s  [60] 60/60 37.1s
+tallies identical every run: 21→{elig15,excl6} 34→{elig25,excl9} 60→{elig43,excl17}
+```
+
+**VRAM (hard gate).** flash-on + q8_0 at 14336: `ollama ps` → **5.6 GB, 100% GPU, CONTEXT 14336**;
+KV cache 238 MiB (q8_0, vs 448 MiB f16). nvidia-smi during active generation: 7.8 GB used / 12 GB,
+**3.9 GB free** — above the 2 GB headroom bar even mid-inference (~4.4 GB idle).
+
+**Shipped**
+- `deploy/ollama.service.d/flash-attn.conf` — systemd drop-in: `OLLAMA_FLASH_ATTENTION=1` +
+  `OLLAMA_KV_CACHE_TYPE=q8_0`, with the rationale + install/verify commands inline. Applied by the
+  human (sudo — same boundary as `deploy/redeploy.sh`); TTS cannot set these (Ollama 0.30.7 ignores
+  per-request flash/KV options — the runner reads daemon-level env once per model load).
+- `deploy/README.md` — new **§3a** installs the drop-in as a host-level prerequisite (ordered like
+  the `.env` step), with the mandatory-flash caveat.
+- `docs/models.md` — new "HOST BINDING — q8_0 KV cache required" section: the config, the 4-row
+  evidence table, the two hard constraints, host-wide-scope safety note, and the
+  "per-request flash_attn is ignored" subsection explaining why it must be host config.
+- `NOTES-FOR-NEXT-CYCLES.md` — T13 findings: q8_0 is a host binding any large-`input_budget`
+  transform inherits; per-request flash/KV ignored; flash-off is a dead end; per-story rejected.
+- `src/tts/transforms/opinion_gate.py` — docstring T13 note (no code change; version stays 0.3.0).
+- `tests/test_gpu.py` — the T12 volume test docstring gains a T13 note (id-set equality at volume
+  depends on the host q8_0 binding; check it first if the test fails). No assertion change.
+
+**Verification**
+- `make lint` clean; `make test` → non-GPU suite unchanged and green (no code paths changed).
+- Phase A live gate (above): flash-on + q8_0, 3× stable, every pass-bar criterion met.
+- **Pending human (sudo, like the T12 redeploy):** apply the drop-in to the prod `ollama.service`,
+  `systemctl restart ollama`, then re-run `make test-gpu` 3× against the reconfigured prod daemon
+  (the T12 volume test asserts id-set equality at 14144 — it will pass with the binding, tail-drop
+  without) and POST the 34-fixture through the deployed service → 200 complete. Recorded here when
+  done. The Phase A gate above is the same config verified 3× against a throwaway daemon.
+
+**Deviations from the plan / ruling.**
+1. **Winning config is flash-*on* + q8_0, not the ruling's flash-*off* + q8_0** — flash-off + q8_0
+   segfaults (`V cache quantization requires flash_attn`), so the literal config cannot run. The
+   test found the config that satisfies every pass-bar criterion; it is a q8_0 KV binding exactly as
+   the ruling intended, with flash pinned on (mandatory). This also corrects the prior root-cause
+   theory (flash attention was blamed; the f16 KV cache was the culprit).
+2. **Prod-daemon 3× GPU re-verification is post-apply (human sudo)**, not done in-cycle — the box
+   has no passwordless sudo and the executor does not reconfigure the prod daemon (same boundary as
+   redeploy). The equivalent 3× verification was done against a throwaway daemon with the identical
+   binding.
+
 ## T12 — registry-wide `num_ctx` fix for large-batch output truncation (2026-07-13)
 
 Mini-cycle. Brickfeed's live verification of `opinion-gate` v0.2.0 failed deterministically at
