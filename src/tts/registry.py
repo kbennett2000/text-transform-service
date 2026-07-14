@@ -39,11 +39,33 @@ class Transform:
     input_budget: int = 3000
     over_budget: Literal["truncate", "reject"] = "truncate"
     truncation_strategy: str = "head"
+    # Ollama context window (tokens) for both prompt and generation. Ollama's runtime
+    # default is only 4096 (T12): a large prompt fills it and starves generation, which
+    # truncates mid-output -> invalid JSON -> 422. Left ``None``, it is computed in
+    # __post_init__ as input_budget + num_predict + 1024 headroom so every transform's
+    # full budget (prompt) plus output ceiling always fits. Override per transform only
+    # when a model's true context or VRAM forces a smaller ceiling.
+    num_ctx: int | None = None
     options_schema: dict = field(default_factory=dict)
     output_schema: dict = field(default_factory=dict)
     validators: tuple[Validator, ...] = ()
     retries: int = 1
     temp_bump: float = 0.15
+
+    # Headroom (tokens) added to input_budget + num_predict when num_ctx is computed.
+    # Covers the system framing, template scaffolding, and tokenizer estimate slack
+    # (input_budget is measured in *estimated* tokens, which can undercount).
+    _NUM_CTX_HEADROOM = 1024
+
+    def __post_init__(self) -> None:
+        # frozen dataclass: fill the computed default via object.__setattr__ so a
+        # per-transform override (a non-None num_ctx) still wins.
+        if self.num_ctx is None:
+            object.__setattr__(
+                self,
+                "num_ctx",
+                self.input_budget + self.num_predict + self._NUM_CTX_HEADROOM,
+            )
 
 
 REGISTRY: dict[str, Transform] = {}

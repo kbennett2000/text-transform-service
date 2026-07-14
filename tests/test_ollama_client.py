@@ -34,6 +34,7 @@ def _params(**over) -> dict:
         "temperature": 0.3,
         "top_p": 0.8,
         "num_predict": 160,
+        "num_ctx": 4184,  # T12: computed default for input_budget 3000 + num_predict 160 + 1024
         "think": False,
     }
     base.update(over)
@@ -65,8 +66,14 @@ async def test_chat_posts_generate_with_correct_body_and_returns_response():
     assert sent["system"] == "You are precise."
     assert sent["prompt"] == "Echo the first sentence. Text: Hello. World."
     assert sent["format"] == _ECHO_SCHEMA
-    # Sampling params live under Ollama's `options` sub-object, not top-level.
-    assert sent["options"] == {"temperature": 0.3, "top_p": 0.8, "num_predict": 160}
+    # Sampling params live under Ollama's `options` sub-object, not top-level. num_ctx (T12)
+    # sizes the context window; without it Ollama's 4096 default truncates large batches.
+    assert sent["options"] == {
+        "temperature": 0.3,
+        "top_p": 0.8,
+        "num_predict": 160,
+        "num_ctx": 4184,
+    }
     assert "temperature" not in sent
 
 

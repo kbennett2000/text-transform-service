@@ -23,7 +23,7 @@ class LLMClient(Protocol):
     ``chat`` returns the model's raw text; the pipeline parses and validates the JSON.
     ``format_schema`` is the transform's ``output_schema`` (passed to Ollama's
     ``format`` field for constrained decoding in T3). ``params`` carries
-    ``temperature``, ``top_p``, ``num_predict`` and ``think``.
+    ``temperature``, ``top_p``, ``num_predict``, ``num_ctx`` and ``think``.
     """
 
     async def chat(
@@ -126,7 +126,9 @@ class OllamaClient:
     schema-constrained decoding (the ADR-0002 guarantee) only holds via ``/api/generate``. See
     ``docs/models.md``. The rendered system/user messages map to ``generate``'s ``system`` and
     ``prompt`` fields; ``format`` (iff a non-empty schema), top-level ``think``, ``keep_alive``,
-    and ``options: {temperature, top_p, num_predict}`` are passed identically.
+    and ``options: {temperature, top_p, num_predict, num_ctx}`` are passed identically. ``num_ctx``
+    (T12) sizes Ollama's context window; without it Ollama's 4096 default starves generation on
+    large-batch transforms and truncates the output mid-JSON.
 
     The per-request model tag arrives inside ``params["model"]`` (the protocol's ``chat``
     signature has no model argument, and one shared client serves every transform's binding).
@@ -153,6 +155,7 @@ class OllamaClient:
                 "temperature": params["temperature"],
                 "top_p": params["top_p"],
                 "num_predict": params["num_predict"],
+                "num_ctx": params["num_ctx"],
             },
         }
         if system:

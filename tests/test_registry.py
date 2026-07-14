@@ -35,6 +35,30 @@ def test_transform_is_frozen():
         t.name = "other"  # type: ignore[misc]
 
 
+def test_num_ctx_computed_by_default():
+    # T12: left unset, num_ctx is computed as input_budget + num_predict + 1024 headroom so
+    # the full prompt budget and the output ceiling always fit Ollama's context window
+    # (whose runtime default is only 4096 and otherwise silently truncates large batches).
+    t = _minimal()  # defaults: input_budget=3000, num_predict=512
+    assert t.num_ctx == 3000 + 512 + 1024  # == 4536
+
+    big = Transform(
+        name="big", version="0.1.0", template="", model="m",
+        input_budget=8000, num_predict=5120,
+    )
+    assert big.num_ctx == 8000 + 5120 + 1024  # == 14144 (opinion-gate's computed value)
+
+
+def test_num_ctx_override_is_respected():
+    # A transform may pin num_ctx explicitly (e.g. a model's true context or VRAM forces a
+    # smaller ceiling); the explicit value wins over the computed default.
+    t = Transform(
+        name="t", version="0.1.0", template="", model="m",
+        input_budget=8000, num_predict=5120, num_ctx=4096,
+    )
+    assert t.num_ctx == 4096
+
+
 def test_register_adds_to_registry():
     t = _minimal()
     returned = register(t)

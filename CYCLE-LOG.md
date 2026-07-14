@@ -1,5 +1,97 @@
 # Cycle Log
 
+## T12 — registry-wide `num_ctx` fix for large-batch output truncation (2026-07-13)
+
+Mini-cycle. Brickfeed's live verification of `opinion-gate` v0.2.0 failed deterministically at
+34-candidate volume (~16.5 KB, *under* the 8000-token budget): HTTP **422 `invalid JSON`**,
+3/3 failures at ~900 ms, while a 21-candidate batch (~12 KB) succeeded in ~18 s. **Root cause
+(confirmed live): TTS never set Ollama's `num_ctx`, so the runtime default of 4096 tokens applied.**
+A large-batch prompt fills the window and starves generation; Ollama truncates the output mid-JSON
+(`slot release: … truncated = 1`) → the parse fails. This was **latent in every transform** — it
+only surfaced where budgets grew. **Scope: the `num_ctx` mechanism + opinion-gate version +
+observability snippet. No schema shapes, no other transform contracts, no error-code changes.**
+opinion-gate bumped **0.2.0 → 0.3.0**.
+
+**Diagnosis (Phase 1, live on the 5070).** Ollama server log, smoking gun, on the 34-candidate
+prompt at the default context:
+```
+llama_context: n_ctx_seq (4096) < n_ctx_train (262144)
+slot update_slots: id 0 | task 0 | new prompt, n_ctx_slot = 4096, n_keep = 4, task.n_tokens = 3952
+slot      release: id 0 | task 0 | stop processing: n_tokens = 4095, truncated = 1
+```
+The 3952-token prompt left ~144 tokens for output → ~2 verdicts → mid-string cutoff. With the fix
+(`num_ctx=14144`) the identical request returns **200** with all verdicts, single attempt.
+
+**Shipped**
+- `src/tts/registry.py` — `Transform` gains `num_ctx: int | None = None`; a `__post_init__`
+  (frozen-safe via `object.__setattr__`) computes it as **`input_budget + num_predict + 1024`**
+  headroom when unset, overridable per transform. Applies registry-wide (every transform now
+  carries a correct, concrete ctx — e.g. echo 4536, image-prompt 4184, opinion-gate 14144).
+- `src/tts/pipeline.py` — threads `transform.num_ctx` into the per-attempt LLM `params`. **Plus a
+  permanent observability improvement (kept regardless of root cause):** on total validation
+  failure the 422 `detail` now carries a bounded `raw_snippet` (last raw output, ≤300 chars) and a
+  `logger.debug` line — additive to `detail.reasons`, no error-code change. This is what made the
+  truncation visible (empty/garbage vs. a real verdict payload).
+- `src/tts/llm.py` — `OllamaClient` adds `num_ctx` to the Ollama `options` sub-object; protocol +
+  client docstrings updated.
+- `src/tts/transforms/opinion_gate.py` — `version` **0.2.0 → 0.3.0**; docstring v0.3.0 change note.
+  No field on the transform itself changed (the fix is the registry-wide mechanism + the computed
+  default landing at 14144).
+- `tests/fixtures/opinion_gate/07_volume_batch_34.txt` (34 candidates, ~15.6 KB, all distinct) and
+  `08_volume_batch_60.txt` (60 candidates, ~5.8k est-tokens, large near-budget) — the batches that
+  truncated pre-fix. Distinct stories (identical repeats made the model degenerate — a fixture
+  artifact, not a service bug).
+- `tests/test_registry.py` (+2: computed default; override respected), `tests/test_pipeline.py`
+  (+4: num_ctx threaded default+override; 422 carries `raw_snippet`; snippet bounded to 300),
+  `tests/test_ollama_client.py` (`options` now asserts `num_ctx`), `tests/test_opinion_gate.py`
+  (v0.3.0, `num_ctx == 14144`), `tests/test_gpu.py` (T12 parametrized volume test at 34 and 60;
+  the two direct-`chat` tests pass `num_ctx`; curated-5 glob excludes the volume fixtures).
+- `docs/requests/brickfeed-2026-07-RESPONSE.md` §2 — v0.3.0 note: within-budget large batches now
+  succeed; no API change; keep chunking beyond 100 candidates / 8000 est-tokens.
+
+**VRAM (hard gate, verified live).** opinion-gate at `num_ctx=14144` on `qwen3.5:9b`: `ollama ps`
+shows **5.7 GB, 100% GPU, CONTEXT 14144** (KV cache fully on-card, no CPU offload). nvidia-smi:
+8.2 GB used / 12 GB, **3.5 GB free** even with ~2.5 GB held by another process; >6 GB headroom when
+the card is otherwise idle. GPU-phase exclusivity (system-overview §5) means renders never run
+concurrently. Fits with margin.
+
+**Verification**
+- `make lint` clean.
+- `make test` → **146 passed** (140 prior + 6 new), 13 gpu deselected.
+- `make test-gpu` on the 5070 (`qwen3.5:9b`) → **13 passed** (11 prior + 2 new volume params).
+  All volume batches: single attempt, **id-set equality held**, every designed tragedy excluded,
+  no quality drift across the list. Latencies: 21→14.0 s, 34→28.4 s, 60→50.0 s.
+
+```
+=== T12 opinion-gate GPU verdict table @ 34-candidate volume (qwen3.5:9b, num_ctx=14144) ===
+latency_ms=28380 attempts=1 n=34 excluded=9 tragedies=8/8 caught
+  s03=excluded (fatal crash killing student athletes)   s06=excluded (fatal warehouse fire, two killed)
+  s09=excluded (flash flooding, deaths/missing)         s12=excluded (earthquake, casualties)
+  s15=excluded (ferry capsize, dozens missing)          s18=excluded (gas explosion kills a family)
+  s21=excluded (bus off mountain road, fatalities)      s24=excluded (mine collapse, deaths)
+  s33=excluded (borderline — one conservative extra exclusion; fail-closed direction)
+  (remaining 25 eligible — pumpkins, therapy dogs, marching band, tutoring, etc.)
+
+=== T12 opinion-gate GPU verdict table @ 60-candidate volume (qwen3.5:9b, num_ctx=14144) ===
+latency_ms=49969 attempts=1 n=60 excluded=17 tragedies=16/16 caught
+  16/16 designed tragedies excluded (s03,06,09,12,15,18,21,24,27,30,33,36,39,42,45,48);
+  s58 one conservative extra exclusion; all others eligible. id-set equality held.
+```
+
+**Live verification (dev instance, real model).** Before merge/redeploy, the fix was exercised on
+a local dev instance (real `qwen3.5:9b`, port 8713) against the 34-candidate fixture:
+**422 `invalid JSON` (v0.2.0-equivalent, default ctx) → 200 with 34 verdicts, v0.3.0, single
+attempt** once `num_ctx` was threaded. The `/opt` systemd redeploy (`deploy/redeploy.sh`, human
+sudo) and its 422→200 against the deployed service is the post-merge step, recorded below when done.
+
+**Deviations from the plan.** None material. (1) The reproduced signature was mid-output truncation
+(`Unterminated string`) rather than the production `char 1` fast-fail — the same root cause in an
+adjacent regime (my fixture is marginally smaller than the production 16.5 KB, so the prompt fit
+the window but starved the output instead of being truncated itself). Both are context exhaustion;
+the Ollama log confirms it. (2) The first fixture draft cycled a small story pool, and identical
+repeats late in the context made the model produce weird tail verdicts — rewritten with fully
+distinct stories; the fix itself was never in question (id-set equality held throughout).
+
 ## T11 — `opinion-gate` input budget fixed for real batch volumes (2026-07-13)
 
 Mini-cycle. Brickfeed's live verification of `opinion-gate` 413'd (`over_budget`) on a routine

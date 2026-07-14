@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 
 import jsonschema
@@ -22,6 +23,13 @@ from jinja2 import Environment
 from tts.budget import STRATEGIES, estimate_tokens
 from tts.llm import LLMBackendError
 from tts.registry import Transform
+
+logger = logging.getLogger("tts.pipeline")
+
+# Max chars of raw model output surfaced on a validation failure (422 detail + debug log).
+# A truncation-past-context failure emits empty/garbage that a snippet makes diagnosable
+# without dumping a multi-KB batch response.
+_RAW_SNIPPET_CHARS = 300
 
 # Prepended to every transform's system message (DESIGN §7, verbatim).
 COMMON_FRAMING = (
@@ -190,6 +198,7 @@ async def run_transform(
     output: dict | None = None
     warnings: list[str] = []
     attempts = 0
+    raw = ""  # last attempt's raw output; surfaced in the 422 detail on total failure
     try:
         for attempt in range(transform.retries + 1):
             attempts = attempt + 1
@@ -199,6 +208,7 @@ async def run_transform(
                 "temperature": temperature,
                 "top_p": transform.top_p,
                 "num_predict": transform.num_predict,
+                "num_ctx": transform.num_ctx,
                 "think": transform.think,
             }
             try:
@@ -220,11 +230,22 @@ async def run_transform(
         semaphore.release()
 
     if output is None:
+        # Surface a bounded snippet of the last raw output. Truncation past the model's
+        # context window yields empty/garbage that parses as "invalid JSON: … char 1";
+        # the snippet makes that (and any other post-generation failure) diagnosable.
+        raw_snippet = raw[:_RAW_SNIPPET_CHARS]
+        logger.debug(
+            "validation_failed transform=%s attempts=%d reasons=%r raw_snippet=%r",
+            transform.name,
+            attempts,
+            reasons,
+            raw_snippet,
+        )
         raise TransformError(
             422,
             "validation_failed",
             "generation failed validation after retries",
-            {"reasons": reasons},
+            {"reasons": reasons, "raw_snippet": raw_snippet},
         )
 
     latency_ms = int((time.perf_counter() - gen_start) * 1000)
