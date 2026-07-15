@@ -138,11 +138,23 @@ Registry listing:
 
 ```json
 { "status": "ok" | "degraded",
+  "ready": true,
   "ollama_reachable": true,
   "models_loaded": ["qwen3:8b"],
   "uptime_s": 8641 }
 ```
-`status` is `ok` iff Ollama answers `/api/ps`. Loaded models come from `/api/ps`. Never 500s — degradation is data, not an error.
+`status` is `ok` iff Ollama answers `/api/ps` (liveness). Loaded models come from `/api/ps`. Never 500s — degradation is data, not an error. The additive `ready` field (T14, ADR-0008) is *readiness*: true iff Ollama is reachable **and** the primary model (`TTS_PRIMARY_MODEL`) is resident. `status` semantics are unchanged.
+
+### GET `/ready` (unauthenticated)
+
+```json
+{ "ready": true,
+  "ollama_reachable": true,
+  "models_loaded": ["qwen3:8b"],
+  "primary_model": "qwen3:8b",
+  "uptime_s": 8641 }
+```
+Readiness alone (T14, ADR-0008): `ready` iff Ollama is reachable **and** `primary_model` is loaded. Lets a caller distinguish "up but no model resident" (e.g. just after `/v1/models/unload`) from "ready to serve". Never 500s.
 
 ### POST `/v1/models/unload`
 
@@ -510,7 +522,9 @@ Nothing in this section changes service code — it constrains the error taxonom
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Runtime |
 | `OLLAMA_KEEP_ALIVE` | `5m` | Passed on every generate |
 | `TRANSFORM_API_KEY` | unset | Enables auth when set |
-| `QUEUE_WAIT_S` | `90` | Semaphore queue timeout |
+| `QUEUE_WAIT_S` | `90` | Semaphore queue timeout (max wait for the slot) |
+| `MAX_QUEUE_DEPTH` | `0` | Max requests waiting for the slot; `0` = unbounded. Overflow fast-fails `503 busy` (T14, ADR-0008) |
+| `TTS_PRIMARY_MODEL` | `qwen3.5:9b` | Model whose residency defines readiness (`/ready`, `/health.ready`; T14, ADR-0008) |
 | `TTS_LOG_LEVEL` | `INFO` | |
 
 **Logging:** one structured line per request (JSON): `ts, request_id, transform, status, attempts, input_tokens_est, truncated, queued_ms, latency_ms, error_code?`. Request id also returned in an `X-Request-Id` response header.

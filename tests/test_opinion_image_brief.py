@@ -9,12 +9,12 @@ lives in `test_gpu.py`.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.llm import FakeLLMClient
 from tts.pipeline import TransformError, run_transform
 from tts.transforms.opinion_image_brief import build_opinion_image_brief
@@ -29,7 +29,7 @@ def _fixture(name: str) -> str:
 async def _run(fake: FakeLLMClient, text: str) -> dict:
     """Run the real opinion-image-brief transform through the pipeline with a fresh semaphore."""
     return await run_transform(
-        build_opinion_image_brief(), text, {}, fake, asyncio.Semaphore(1), 90.0
+        build_opinion_image_brief(), text, {}, fake, GenerationGate(queue_wait_s=90.0)
     )
 
 

@@ -31,7 +31,8 @@ build plan. Decisions are recorded as ADRs in [`adr/`](adr/).
 
 | Method + path | Auth | Purpose |
 |---|---|---|
-| `GET /health` | never | Service + Ollama status; never 500s |
+| `GET /health` | never | Service + Ollama status (+ additive `ready`); never 500s |
+| `GET /ready` | never | True model readiness: `ready` iff the primary model is resident; never 500s |
 | `GET /v1/transforms` | when enabled | List registered transforms + their JSON Schemas |
 | `POST /v1/transform/{name}` | when enabled | Run a named transform: text → schema-constrained JSON |
 | `POST /v1/models/unload` | when enabled | Free model VRAM (`{"model": "..."}` or `{}` for all) |
@@ -64,11 +65,25 @@ returns `200` with `status: "degraded"` rather than erroring.
 ```json
 {
   "status": "ok",
+  "ready": true,
   "ollama_reachable": true,
   "models_loaded": ["qwen3.5:9b"],
   "uptime_s": 8641
 }
 ```
+
+`status` is `"ok"` iff Ollama's `/api/ps` answered — liveness. The additive `ready` flag
+(T14) is *readiness*: true iff the primary model (`TTS_PRIMARY_MODEL`, default `qwen3.5:9b`)
+is actually resident. The two differ right after a `/v1/models/unload`: Ollama still answers
+(`status:"ok"`) but nothing is loaded (`ready:false`). Poll `GET /ready` for readiness alone:
+
+```bash
+curl -s localhost:8712/ready | jq
+# { "ready": false, "ollama_reachable": true, "models_loaded": [],
+#   "primary_model": "qwen3.5:9b", "uptime_s": 8641 }
+```
+
+`/ready` never 500s either — Ollama down is `ready:false`, not an error.
 
 ## Transforms — `POST /v1/transform/{name}`
 
@@ -264,7 +279,9 @@ curl -s localhost:8712/v1/transforms | jq
 Frees model VRAM (the endpoint the Scriptorium orchestrator calls before a render phase).
 Body `{"model": "qwen3.5:9b"}` targets one; `{}` unloads everything currently loaded. Each
 target is unloaded (`keep_alive: 0`) and the response reports models confirmed gone via
-`/api/ps`:
+`/api/ps`. The eviction is performed while holding the generation slot (T14), so it can't
+race an in-flight transform; and because transforms reload the model on demand, an ill-timed
+unload just makes the next transform slower, never `503 model_unavailable`.
 
 ```bash
 curl -s -X POST localhost:8712/v1/models/unload \
@@ -281,12 +298,14 @@ curl -s -X POST localhost:8712/v1/models/unload \
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama runtime |
 | `OLLAMA_KEEP_ALIVE` | `5m` | Passed on every generate |
 | `TRANSFORM_API_KEY` | unset | Enables shared-secret auth when set |
-| `QUEUE_WAIT_S` | `90` | Generation queue timeout |
+| `QUEUE_WAIT_S` | `90` | Generation queue timeout (max wait for the slot) → `503 busy` |
+| `MAX_QUEUE_DEPTH` | `0` | Max requests allowed to wait for the slot; `0` = unbounded. When set, a request arriving with the queue full fast-fails `503 busy` (T14) |
+| `TTS_PRIMARY_MODEL` | `qwen3.5:9b` | Model whose residency defines readiness for `/ready` and `/health.ready` (T14) |
 | `TTS_LOG_LEVEL` | `INFO` | Log level |
 | `TTS_ENV` | `prod` | `dev` enables dev-only transforms (`echo`) |
 
-(All of the above except `TTS_ENV` are the DESIGN §9 table; `TTS_ENV` is a T2 addition
-for the dev gate.)
+(The DESIGN §9 table plus later additions: `TTS_ENV` (T2 dev gate) and `MAX_QUEUE_DEPTH` /
+`TTS_PRIMARY_MODEL` (T14 concurrency-burst reliability, ADR-0008).)
 
 **Model bindings** (see [`models.md`](models.md)): the default per-transform model
 is `qwen3.5:9b`; the fast test/CI model (and `echo`'s binding) is `qwen3.5:2b`. These were

@@ -58,7 +58,10 @@ sudo chmod 600 /opt/text-transform-service/.env
 When `TRANSFORM_API_KEY` is set, every `/v1/*` request must carry
 `X-Transform-Key: <value>` (ADR-0003); `/health` stays open. Omit the file (or leave the key
 unset) to run keyless. All other config vars (`TTS_PORT`, `OLLAMA_URL`, `QUEUE_WAIT_S`,
-`TTS_LOG_LEVEL`, …) may also go in this file — see the config table in the top-level README.
+`MAX_QUEUE_DEPTH`, `TTS_PRIMARY_MODEL`, `TTS_LOG_LEVEL`, …) may also go in this file — see the
+config table in the developer guide. For a *readiness* check (model actually loaded, not just
+Ollama reachable) poll `GET /ready` or `/health`'s additive `ready` flag; both stay open like
+`/health` (T14).
 
 ## 3a. Ollama host binding — required for large opinion-gate batches (cycle T13)
 

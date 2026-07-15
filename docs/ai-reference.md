@@ -13,8 +13,13 @@ single-GPU (RTX 5070), port **8712**. **Not** a general LLM gateway. Consumers: 
 **Invariants (violating any is a bug).**
 - Error codes (below) are a **frozen contract** with two consumers — changing a code is breaking.
 - `/health` **never 500s**; Ollama down → `200` with `status:"degraded"`, `ollama_reachable:false`.
-- **One in-flight generation**, serialized by a single-slot semaphore; overflow queues, then `503 busy`
-  after `QUEUE_WAIT_S`.
+  Additive `ready` flag (and `GET /ready`) = true iff `TTS_PRIMARY_MODEL` is resident (T14/ADR-0008);
+  distinct from `status` (liveness). Neither 500s.
+- **One in-flight generation**, serialized by a single slot (`GenerationGate`); overflow queues up to
+  `QUEUE_WAIT_S` → `503 busy`, or fast-fails `503 busy` if `MAX_QUEUE_DEPTH` (>0) is exceeded (T14).
+- **Reload-on-demand:** the pipeline `ensure_loaded`s the model inside the slot, and `/v1/models/unload`
+  holds the slot — so an eviction can't race a generation and never causes `503 model_unavailable`
+  for a well-behaved caller; a genuinely-down backend still → `503 model_unavailable` (T14/ADR-0008).
 - Output is **schema-constrained** (`output_schema` → Ollama `format` grammar) **and** re-validated
   post-generation; validator failure → temp-bumped retry → `422`.
 - Model thinking disabled (`think:false`). Never substitute model tags (bindings in [models.md](models.md)).
@@ -24,7 +29,8 @@ single-GPU (RTX 5070), port **8712**. **Not** a general LLM gateway. Consumers: 
 
 | Method + path | Auth | Purpose | Notes |
 |---|---|---|---|
-| `GET /health` | never | service + Ollama status | never 500s; `{status, ollama_reachable, models_loaded[], uptime_s}` |
+| `GET /health` | never | service + Ollama status | never 500s; `{status, ready, ollama_reachable, models_loaded[], uptime_s}` |
+| `GET /ready` | never | model readiness | never 500s; `{ready, ollama_reachable, models_loaded[], primary_model, uptime_s}`; `ready` iff primary model resident |
 | `GET /v1/transforms` | when enabled | registry listing | each: `name, version, model, input_budget, over_budget, options_schema, output_schema`; template + validators never exposed |
 | `POST /v1/transform/{name}` | when enabled | run transform | body `{text, options?}`; `200 {output, meta}` |
 | `POST /v1/models/unload` | when enabled | free VRAM | body `{model}` or `{}` (all); `→ {unloaded:[...]}` (confirmed via `/api/ps`) |
@@ -89,7 +95,9 @@ built; the task stays on Brickfeed's incumbent provider pending a bench + produc
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama runtime |
 | `OLLAMA_KEEP_ALIVE` | `5m` | passed on every generate |
 | `TRANSFORM_API_KEY` | unset | enables shared-secret auth when set |
-| `QUEUE_WAIT_S` | `90` | generation queue timeout → `503 busy` |
+| `QUEUE_WAIT_S` | `90` | generation queue timeout (max wait for slot) → `503 busy` |
+| `MAX_QUEUE_DEPTH` | `0` | max waiters for the slot; `0`=unbounded; overflow fast-fails `503 busy` (T14) |
+| `TTS_PRIMARY_MODEL` | `qwen3.5:9b` | model whose residency defines `/ready` + `/health.ready` (T14) |
 | `TTS_LOG_LEVEL` | `INFO` | log level |
 | `TTS_ENV` | `prod` | `dev` registers dev-only transforms (`echo`) |
 

@@ -14,6 +14,8 @@ ENV_VARS = [
     ("OLLAMA_KEEP_ALIVE", "10m", "ollama_keep_alive", "5m", "10m"),
     ("TRANSFORM_API_KEY", "s3cret", "transform_api_key", None, "s3cret"),
     ("QUEUE_WAIT_S", "45", "queue_wait_s", 90, 45),
+    ("MAX_QUEUE_DEPTH", "32", "max_queue_depth", 0, 32),
+    ("TTS_PRIMARY_MODEL", "qwen3.5:2b", "primary_model", "qwen3.5:9b", "qwen3.5:2b"),
     ("TTS_LOG_LEVEL", "DEBUG", "log_level", "INFO", "DEBUG"),
 ]
 
@@ -33,6 +35,8 @@ def test_defaults_when_env_unset():
     assert s.ollama_keep_alive == "5m"
     assert s.transform_api_key is None
     assert s.queue_wait_s == 90
+    assert s.max_queue_depth == 0
+    assert s.primary_model == "qwen3.5:9b"
     assert s.log_level == "INFO"
 
 

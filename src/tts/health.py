@@ -53,6 +53,17 @@ async def probe_ollama(base_url: str, timeout_s: float = PROBE_TIMEOUT_S) -> Oll
         return OllamaHealth(reachable=True, models_loaded=models)
 
 
+def is_ready(health: OllamaHealth, primary_model: str) -> bool:
+    """True iff Ollama is reachable AND the primary model is resident (T14).
+
+    Readiness is distinct from ``status`` (which is ``ok`` whenever ``/api/ps`` answers):
+    it distinguishes "up but no model loaded" (e.g. right after a ``/v1/models/unload``)
+    from "loaded and able to serve a transform immediately". Used by ``GET /ready`` and
+    the additive ``ready`` field on ``/health``.
+    """
+    return health.reachable and primary_model in health.models_loaded
+
+
 def _loaded_model_names(ps_body: object) -> list[str]:
     """Extract loaded model names from an ``/api/ps`` JSON body, defensively."""
     if not isinstance(ps_body, dict):

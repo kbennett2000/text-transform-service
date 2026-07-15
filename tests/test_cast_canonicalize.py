@@ -9,12 +9,12 @@ FakeLLM. They never assert model wording; real generation on `qwen3.5:9b` lives 
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.llm import FakeLLMClient
 from tts.pipeline import TransformError, run_transform
 from tts.transforms.cast_canonicalize import build_cast_canonicalize
@@ -31,7 +31,7 @@ def _options() -> dict:
 async def _run(fake: FakeLLMClient, options: dict) -> dict:
     """Run the real cast-canonicalize transform; text is empty (evidence is in options)."""
     return await run_transform(
-        build_cast_canonicalize(), "", options, fake, asyncio.Semaphore(1), 90.0
+        build_cast_canonicalize(), "", options, fake, GenerationGate(queue_wait_s=90.0)
     )
 
 

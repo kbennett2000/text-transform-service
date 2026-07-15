@@ -28,6 +28,14 @@ class Settings:
     ollama_keep_alive: str = "5m"
     transform_api_key: str | None = None
     queue_wait_s: int = 90
+    # Max number of requests allowed to wait for the single generation slot (T14). 0 =
+    # unbounded (queue only bounded by queue_wait_s, the pre-T14 behavior). When >0, a
+    # request arriving with the queue already full fast-fails 503 busy instead of waiting.
+    max_queue_depth: int = 0
+    # The model whose residency defines readiness (T14). /ready and /health's `ready`
+    # flag report true iff this model is loaded in Ollama. Default is the production
+    # working binding (docs/models.md); the service never substitutes models silently.
+    primary_model: str = "qwen3.5:9b"
     log_level: str = "INFO"
     # Deployment environment. "dev" enables dev-only transforms (e.g. echo). Not part
     # of the DESIGN §9 table; introduced in T2 for the echo dev gate.
@@ -56,6 +64,8 @@ class Settings:
             ollama_keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "5m"),
             transform_api_key=key,
             queue_wait_s=_int_env("QUEUE_WAIT_S", 90),
+            max_queue_depth=_int_env("MAX_QUEUE_DEPTH", 0),
+            primary_model=os.getenv("TTS_PRIMARY_MODEL", "qwen3.5:9b"),
             log_level=os.getenv("TTS_LOG_LEVEL", "INFO"),
             env=os.getenv("TTS_ENV", "prod"),
         )

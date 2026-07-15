@@ -12,10 +12,10 @@ The real Ollama client and its ``model_unavailable`` handling arrive in cycle T3
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import jsonschema
 from jinja2 import Environment
@@ -23,6 +23,12 @@ from jinja2 import Environment
 from tts.budget import STRATEGIES, estimate_tokens
 from tts.llm import LLMBackendError
 from tts.registry import Transform
+
+if TYPE_CHECKING:
+    # Runtime import would be circular: concurrency imports TransformError from here.
+    # The annotation is a string under `from __future__ import annotations`, so a
+    # type-only import suffices.
+    from tts.concurrency import GenerationGate
 
 logger = logging.getLogger("tts.pipeline")
 
@@ -173,8 +179,7 @@ async def run_transform(
     text: str,
     options: dict,
     llm,
-    semaphore: asyncio.Semaphore,
-    queue_wait_s: float,
+    gate: GenerationGate,
 ) -> dict:
     """Run the full §3 pipeline for one request. Raises :class:`TransformError`."""
     _validate_options(transform, options)
@@ -182,52 +187,46 @@ async def run_transform(
     input_tokens_est = estimate_tokens(text)
     messages = render_messages(transform.template, text, options)
 
-    # Acquire the single-in-flight generation slot, queueing up to queue_wait_s
-    # (ADR-0005). Timeout -> 503 busy.
-    queue_start = time.perf_counter()
-    try:
-        await asyncio.wait_for(semaphore.acquire(), timeout=queue_wait_s)
-    except TimeoutError as exc:
-        raise TransformError(
-            503, "busy", "generation queue timed out", {"queue_wait_s": queue_wait_s}
-        ) from exc
-    queued_ms = int((time.perf_counter() - queue_start) * 1000)
-
-    gen_start = time.perf_counter()
     reasons: list[str] = []
     output: dict | None = None
     warnings: list[str] = []
     attempts = 0
     raw = ""  # last attempt's raw output; surfaced in the 422 detail on total failure
-    try:
-        for attempt in range(transform.retries + 1):
-            attempts = attempt + 1
-            temperature = transform.temperature + transform.temp_bump * attempt
-            params = {
-                "model": transform.model,
-                "temperature": temperature,
-                "top_p": transform.top_p,
-                "num_predict": transform.num_predict,
-                "num_ctx": transform.num_ctx,
-                "think": transform.think,
-            }
-            try:
+
+    # Acquire the single-in-flight generation slot, queueing up to queue_wait_s and
+    # bounded by max_queue_depth (ADR-0005 / T14 ADR-0008). Timeout or a full queue ->
+    # 503 busy. The gate releases the slot on exit.
+    async with gate.slot() as queued_ms:
+        gen_start = time.perf_counter()
+        try:
+            # Reload-on-demand inside the slot: a prior unload / idle expiry can't leave
+            # this caller with model_unavailable (T14).
+            await llm.ensure_loaded(transform.model)
+            for attempt in range(transform.retries + 1):
+                attempts = attempt + 1
+                temperature = transform.temperature + transform.temp_bump * attempt
+                params = {
+                    "model": transform.model,
+                    "temperature": temperature,
+                    "top_p": transform.top_p,
+                    "num_predict": transform.num_predict,
+                    "num_ctx": transform.num_ctx,
+                    "think": transform.think,
+                }
                 raw = await llm.chat(messages, transform.output_schema, params)
-            except LLMBackendError as exc:
-                # Infrastructure failure (Ollama down / errored), not a validation failure:
-                # fail fast, do not retry. The semaphore is released by the finally below.
-                raise TransformError(
-                    503,
-                    "model_unavailable",
-                    "generation backend unavailable",
-                    exc.detail or None,
-                ) from exc
-            output, reason, warnings = _attempt_reason(transform, raw, options)
-            if output is not None:
-                break
-            reasons.append(reason)
-    finally:
-        semaphore.release()
+                output, reason, warnings = _attempt_reason(transform, raw, options)
+                if output is not None:
+                    break
+                reasons.append(reason)
+        except LLMBackendError as exc:
+            # Infrastructure failure (Ollama down / errored) from either the reload or a
+            # generation, not a validation failure: fail fast, do not retry.
+            raise TransformError(
+                503,
+                "model_unavailable",
+                "generation backend unavailable",
+                exc.detail or None,
+            ) from exc
 
     if output is None:
         # Surface a bounded snippet of the last raw output. Truncation past the model's

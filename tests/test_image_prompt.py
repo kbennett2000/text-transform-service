@@ -8,12 +8,12 @@ job). Real generation on `qwen3.5:9b` lives in `test_gpu.py`.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.llm import FakeLLMClient
 from tts.pipeline import TransformError, run_transform
 from tts.transforms.image_prompt import build_image_prompt
@@ -28,7 +28,7 @@ def _fixture(name: str) -> str:
 async def _run(fake: FakeLLMClient, text: str) -> dict:
     """Run the real image-prompt transform through the pipeline with a fresh semaphore."""
     return await run_transform(
-        build_image_prompt(), text, {}, fake, asyncio.Semaphore(1), 90.0
+        build_image_prompt(), text, {}, fake, GenerationGate(queue_wait_s=90.0)
     )
 
 

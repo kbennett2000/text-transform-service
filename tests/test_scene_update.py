@@ -9,12 +9,12 @@ path) — with a deterministic FakeLLM. They never assert model wording; real ge
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from tts.concurrency import GenerationGate
 from tts.llm import FakeLLMClient
 from tts.pipeline import TransformError, run_transform
 from tts.transforms.scene_update import build_scene_update
@@ -32,7 +32,7 @@ def _start_options() -> dict:
 
 async def _run(fake: FakeLLMClient, text: str, options: dict) -> dict:
     return await run_transform(
-        build_scene_update(), text, options, fake, asyncio.Semaphore(1), 90.0
+        build_scene_update(), text, options, fake, GenerationGate(queue_wait_s=90.0)
     )
 
 
