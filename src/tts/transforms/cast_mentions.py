@@ -2,7 +2,13 @@
 
 Called once per logical page (any order, parallel-safe). Extracts who is mentioned on
 the page and their **verbatim** physical descriptors; the caller reduces mentions across
-pages downstream. Schema, template, budget, and validator are verbatim from DESIGN §7.2.
+pages downstream.
+
+T15 (v0.2.0) deviation from §7.2's verbatim template: the ``aliases`` rule now forbids pronouns
+and other characters' names (an alias must denote the same person). Motivated by downstream
+contamination — polluted aliases let a character cross-link into the wrong scene and get the wrong
+appearance. The caller (Scriptorium ``reduce_cast``) also filters these deterministically; this
+fixes them at source. Schema and budget are unchanged.
 
 Budget is ``reject`` (not ``truncate``): a page over the 1600 est-token budget is a
 paginator bug upstream, so we fail loudly with 413 rather than silently drop text.
@@ -33,7 +39,9 @@ creature acting as a character) mentioned on this page.
 Rules:
 - "name": the most specific name/label used on THIS page ("the Time Traveller",
   "Weena", "the innkeeper"). Keep the article if the text uses one.
-- "aliases": other labels used for the same character on this page.
+- "aliases": other NAMES or noun-labels used for the SAME character on this page.
+  Do NOT include pronouns (he, she, they, him, his, thou, thee) and do NOT include
+  the name of any OTHER character — an alias must denote this same person.
 - "descriptors": verbatim phrases from the text describing physical appearance,
   clothing, age, or bearing. Quote the text's words; do not paraphrase or invent.
   Empty array if none.
@@ -77,7 +85,7 @@ def build_cast_mentions() -> Transform:
     """Construct the ``cast-mentions`` transform (DESIGN §7.2)."""
     return Transform(
         name="cast-mentions",
-        version="0.1.0",
+        version="0.2.0",  # T15: aliases rule forbids pronouns / other characters' names
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.2 says qwen3:8b (absent); rebound in T3, see docs/models.md
         temperature=0.2,

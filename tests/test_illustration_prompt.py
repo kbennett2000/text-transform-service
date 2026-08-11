@@ -95,6 +95,40 @@ async def test_medium_word_is_422_validation_failed():
     assert all("banned substring" in r for r in exc.value.detail["reasons"])
 
 
+async def test_camera_scaffolding_leak_is_422_validation_failed():
+    # v0.2.0: the model sometimes dumps camera/quality scaffolding into the positive prompt
+    # ("…up close shot style medium quality terms"). The banned-phrase validator rejects it.
+    leak = {
+        "prompt": (
+            "A small brass machine vanishing from an octagonal table as four gentlemen lean in "
+            "beneath a shaded lamp in a cluttered room, medium quality terms."
+        ),
+        "depicted": ["the Time Traveller"],
+        "shot": "medium",
+    }
+    fake = FakeLLMClient(lambda *a: json.dumps(leak))  # same leak on every retried attempt
+    with pytest.raises(TransformError) as exc:
+        await _run(fake, _options())
+    assert exc.value.status == 422
+    assert exc.value.code == "validation_failed"
+    assert all("banned substring" in r for r in exc.value.detail["reasons"])
+
+
+async def test_over_long_montage_prompt_is_422_validation_failed():
+    # v0.2.0: word ceiling 80 — an over-long prompt is drifting toward a multi-scene montage.
+    montage = {
+        "prompt": " ".join(["figure"] * 85),  # 85 words > 80
+        "depicted": ["the Time Traveller"],
+        "shot": "wide",
+    }
+    fake = FakeLLMClient(lambda *a: json.dumps(montage))
+    with pytest.raises(TransformError) as exc:
+        await _run(fake, _options())
+    assert exc.value.status == 422
+    assert exc.value.code == "validation_failed"
+    assert any("words outside range" in r for r in exc.value.detail["reasons"])
+
+
 async def test_depicted_not_in_cast_is_soft_warning_with_200():
     # A depicted name outside the cast is recorded to meta.warnings — the request still
     # succeeds (200), never 422 (DESIGN §7.5 "warn not fail" posture on name sets).

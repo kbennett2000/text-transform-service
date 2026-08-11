@@ -1,5 +1,34 @@
 # Cycle Log
 
+## T15 — illustration/cast prompt hygiene: one scene, clean prompt, alias de-contamination (2026-08-11)
+
+Downstream (Scriptorium) illustrations showed the wrong person and mashed-up scenes: Marfa (a woman)
+rendered as Grigory ("old man, grey beard, reading Lives of the Saints"); Mitya (an adult) as a boy;
+prompts crammed multi-beat montages ("gropes in bed BEFORE running to the garden…") and leaked camera/
+quality scaffolding into the positive prompt ("…up close shot style medium quality terms"). Root cause
+is these transforms' output: `cast-mentions` emitting pronouns and other characters' names as aliases,
+and `illustration-prompt` roaming across beats / dumping scaffolding.
+
+**Shipped (template + validator changes; all `version` bumped 0.1.0→0.2.0, deviating from the DESIGN
+§7.x verbatim templates — logged here per the versioning rule):**
+- **`illustration-prompt` v0.2.0** — template: ONE frozen instant (no before/after/then/while
+  sequences), ≤3 figures, per-character descriptor binding (never transfer one character's description
+  to another; keep gender/age), and the positive `prompt` must hold no camera/quality/label/`avoid`
+  scaffolding. Validators: word ceiling 90→80; `banned_substrings` gains camera/scaffolding *phrases*
+  ("close-up", "wide shot", "medium quality", "quality terms", "shot style" — multi-word only, so real
+  prose never trips). `temperature` 0.6→0.35. Two new FakeLLM tests (scaffolding-leak 422, montage-length
+  422).
+- **`cast-mentions` v0.2.0** — `aliases` rule now forbids pronouns and any *other* character's name (an
+  alias must denote the same person). Template-only (no hard validator: a 422 here would fail whole
+  pages, and Scriptorium `reduce_cast` already filters these deterministically — belt and suspenders).
+- **`cast-canonicalize` v0.2.0** — added a line to ignore any "also called" alias that is a pronoun or
+  another character's name; `temperature` 0.5→0.3.
+
+**Deviations:** template/validator/temperature changes to three transforms vs their §7.x verbatim
+definitions (motivation above). Options/output schemas, budgets, error codes, and model bindings
+unchanged. **Verification:** ruff clean; non-gpu suite 163 passed. Real-model behaviour to be eyeballed
+via a Scriptorium re-bake (image quality is never unit-asserted). GPU eval (`test_gpu.py`) unchanged.
+
 ## T14 — Concurrency-burst reliability: bounded queue, reload-on-demand, readiness (2026-07-14)
 
 A consumer firing several transforms concurrently got intermittent 503s: many `503 busy` during

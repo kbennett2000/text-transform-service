@@ -3,8 +3,12 @@
 Called once per major character. The evidence rides in ``options`` (the ``text`` input is
 normally empty); the transform composes the collected verbatim descriptors into one
 paintable canonical visual description an illustrator can work from, choosing plain
-era-appropriate defaults where the evidence is silent. Schema, options schema, template,
-budget, and validator are verbatim from DESIGN §7.3.
+era-appropriate defaults where the evidence is silent.
+
+T15 (v0.2.0) deviation from §7.3's verbatim template: an added line tells the model to ignore any
+"also called" alias that is a pronoun or another character's name (defends against upstream alias
+contamination binding the wrong appearance); ``temperature`` 0.5→0.3 for less gap-fill drift.
+Schema, options schema, and budget are unchanged.
 
 Binding: §7.3 names ``qwen3:8b``, absent on the box; this transform binds the
 human-approved T3 rebind ``qwen3.5:9b`` (see ``docs/models.md`` and
@@ -34,6 +38,8 @@ _TEMPLATE = (
     "Evidence — verbatim descriptors collected from the text:\n"
     '{% for d in options.descriptors %}- "{{ d }}"\n'
     "{% endfor %}\n"
+    "Ignore any \"also called\" entry that is a pronoun or another character's name;\n"
+    "describe only the one character named above.\n"
     "Write:\n"
     '- "visual_description": 2–4 sentences a painter could work from — apparent age,\n'
     "  build, hair, face, characteristic clothing. Use ONLY the evidence; where the\n"
@@ -77,10 +83,10 @@ def build_cast_canonicalize() -> Transform:
     """Construct the ``cast-canonicalize`` transform (DESIGN §7.3)."""
     return Transform(
         name="cast-canonicalize",
-        version="0.1.0",
+        version="0.2.0",  # T15: ignore pronoun/other-name aliases; lower temp
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.3 says qwen3:8b (absent); rebound in T3, see docs/models.md
-        temperature=0.5,  # mild creativity for gap-filling defaults
+        temperature=0.3,  # was 0.5 — less gap-fill drift
         num_predict=400,
         input_budget=1200,
         over_budget="truncate",

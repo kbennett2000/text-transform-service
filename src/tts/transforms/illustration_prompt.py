@@ -4,8 +4,14 @@ Input: a selected page plus its scene ledger and the cast entries for characters
 Output: one neutral SDXL *subject* prompt for a single illustration of the page's best
 visual beat, weaving each depicted character's visual identifiers in (never a bare name),
 with the ``depicted`` set and a ``shot`` framing. Style/medium/artist words are caller-side;
-their appearance here is drift. Schema, options schema, template, budget, and validators are
-verbatim from DESIGN §7.5.
+their appearance here is drift.
+
+T15 (v0.2.0) deviation from §7.5's verbatim definition: the template now forbids multi-beat
+montages, caps figures at three, binds each character's descriptors to that character only, and
+requires the positive ``prompt`` to hold no camera/quality/label scaffolding; validators gained
+camera/scaffolding banned phrases and a tighter word ceiling; ``temperature`` 0.6→0.35. Motivated
+by observed bad output (montages, "…medium quality terms" leak, cross-character appearance). Options
+schema, output schema, and budget are unchanged.
 
 The ``depicted ⊆ cast`` check is a **soft** validator: a stray depicted name is recorded to
 ``meta.warnings`` (DESIGN's "warn not fail" posture on name sets), not a 422.
@@ -45,11 +51,20 @@ Write ONE subject prompt depicting this page's best visual beat
 ("{{ options.ledger.best_visual_beat }}") — you may choose a better beat from the
 page text if one exists.
 Rules:
-- One moment, one composition. 30–80 words, one line.
+- ONE frozen instant, one composition. 30–80 words, one line. Never a sequence:
+  do not describe what happens before or after (no "before", "after", "then",
+  "while ... rushes", "transitioning to").
+- At most THREE figures. If the beat implies a crowd, show a few representative
+  figures, not the crowd.
 - Ground the scene: setting, time of day, atmosphere from the ledger.
-- For each depicted character, include their visual identifiers from the list
-  above (condensed), not just their name.
-- No style/medium/artist words. No text or lettering in the scene.
+- For each depicted character, weave in their visual identifiers from the list
+  above (condensed), not just their name. Attach each person's identifiers to
+  THAT person only — never transfer one character's description to another, and
+  keep each person's stated gender and apparent age.
+- The "prompt" text is pure scene description. It must NOT contain style/medium/
+  artist words, camera words (shot, wide, medium, close, close-up), quality words,
+  field labels, or the "avoid" terms — those belong only in "shot" and "avoid".
+- No text or lettering in the scene.
 - "shot": wide (environment-dominant), medium (figures in setting), close (faces/objects).
 - "avoid": up to 6 short negative hints specific to this scene (e.g., "modern
   clothing", "crowds") — omit generic quality terms.
@@ -98,20 +113,25 @@ def build_illustration_prompt() -> Transform:
     """Construct the ``illustration-prompt`` transform (DESIGN §7.5)."""
     return Transform(
         name="illustration-prompt",
-        version="0.1.0",
+        # 0.2.0 (T15): template tightened to one instant / ≤3 figures / clean positive prompt +
+        # per-character descriptor binding; validators catch camera/scaffolding leak; lower temp.
+        version="0.2.0",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.5 says qwen3:8b (absent); rebound in T3, see docs/models.md
-        temperature=0.6,
+        temperature=0.35,  # was 0.6 — less drift/montage, more reproducible
         num_predict=350,
         input_budget=1600,
         over_budget="reject",  # a page over budget is a paginator bug — fail loud, never truncate
         options_schema=_OPTIONS_SCHEMA,
         output_schema=_OUTPUT_SCHEMA,
         validators=(
-            word_range("prompt", 20, 90),
+            word_range("prompt", 20, 80),  # hi 90→80: a longer prompt is drifting toward a montage
             banned_substrings(
                 "prompt",
-                ["**", "\n", "style of", "photograph", "oil painting", "watercolor", "engraving"],
+                # medium/style words (drift) + the camera/quality "scaffolding" the model sometimes
+                # dumps into the positive field. Multi-word phrases only, to never trip real prose.
+                ["**", "\n", "style of", "photograph", "oil painting", "watercolor", "engraving",
+                 "close-up", "wide shot", "medium quality", "quality terms", "shot style"],
             ),
             depicted_subset_of_cast(),
         ),
