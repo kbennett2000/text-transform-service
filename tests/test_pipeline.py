@@ -116,6 +116,22 @@ async def test_always_invalid_is_422_with_reasons_len_retries_plus_1():
     assert len(exc.value.detail["reasons"]) == t.retries + 1
 
 
+async def test_lone_surrogate_in_model_output_is_stripped_not_500():
+    # An LLM occasionally emits an escaped lone surrogate (here the high half of a
+    # Mathematical-Bold letter). json.loads accepts it, but the value can never be UTF-8
+    # encoded — without scrubbing, serializing the response 500s and kills the whole bake.
+    t = _transform()
+    fake = FakeLLMClient(['{"echo": "Dmitri \\ud835 Karamazov"}'])
+    result = await run_transform(t, "text", {}, fake, _gate())
+
+    echoed = result["output"]["echo"]
+    # The surrogate is gone; surrounding text is preserved.
+    assert "\ud835" not in echoed
+    assert "Dmitri" in echoed and "Karamazov" in echoed
+    # The whole output is now UTF-8 serializable (the property that was violated).
+    json.dumps(result["output"]).encode("utf-8")
+
+
 async def test_computed_num_ctx_is_threaded_into_llm_params():
     # T12: the pipeline passes the transform's num_ctx into the LLM params so Ollama sizes
     # its context window. Left unset it is the computed default input_budget+num_predict+1024.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -134,6 +135,30 @@ def _enforce_budget(transform: Transform, text: str) -> tuple[str, bool]:
     return strategy(text, transform.input_budget)
 
 
+# Unpaired UTF-16 surrogates (U+D800–U+DFFF). ``json.loads`` combines valid surrogate
+# *pairs* into their true character, so only *lone* halves survive here — and a lone
+# surrogate can never be UTF-8 encoded, so it would 500 the whole response on serialization.
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
+
+def _strip_surrogates(value: object) -> object:
+    """Recursively drop unpaired surrogate code points from parsed model output.
+
+    LLMs occasionally emit an escaped lone surrogate — e.g. the high half of a
+    Mathematical-Bold letter (``\\ud835``) with no matching low half. It parses into a
+    Python ``str`` fine but can never be UTF-8 encoded, so serializing the response 500s
+    (and, upstream, kills the whole bake). The code point carries no recoverable character,
+    so we drop it. Keys are sanitized too — a surrogate anywhere in the structure is fatal.
+    """
+    if isinstance(value, str):
+        return _SURROGATE_RE.sub("", value)
+    if isinstance(value, list):
+        return [_strip_surrogates(v) for v in value]
+    if isinstance(value, dict):
+        return {_strip_surrogates(k): _strip_surrogates(v) for k, v in value.items()}
+    return value
+
+
 def _attempt_reason(
     transform: Transform, raw: str, options: dict
 ) -> tuple[dict | None, str | None, list[str]]:
@@ -149,6 +174,10 @@ def _attempt_reason(
         output = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as exc:
         return None, f"invalid JSON: {exc}", []
+
+    # Model output can contain lone surrogates that would 500 on response encoding; scrub
+    # them before schema/validators/return so the value is always UTF-8 serializable.
+    output = _strip_surrogates(output)
 
     if transform.output_schema:
         try:

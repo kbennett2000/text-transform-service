@@ -1,5 +1,25 @@
 # Cycle Log
 
+## T17 — scrub lone surrogates from model output (never 500 the response) (2026-08-11)
+
+An unattended 600-page Scriptorium bake (*The Brothers Karamazov*) died at page 301: `cast-mentions`
+returned `500 Internal Server Error` with `UnicodeEncodeError: 'utf-8' codec can't encode character
+'\ud835' … surrogates not allowed`. The model emitted an escaped **lone UTF-16 surrogate** (the high
+half of a Mathematical-Bold letter, no matching low half). `json.loads` accepts it into a Python
+`str`, but the value can never be UTF-8 encoded — so serializing the response 500s. Stochastic: the
+same page succeeds on a re-run when the model doesn't emit the character.
+
+**Shipped:** `pipeline._attempt_reason` now scrubs unpaired surrogates (U+D800–U+DFFF) from the parsed
+output — recursively over strings, list items, and dict keys/values — immediately after `json.loads`,
+before schema/validators/return. Valid surrogate *pairs* are already combined by `json.loads`, so only
+lone halves (which carry no recoverable character) are dropped. Service-wide fix in the shared
+pipeline; **no transform version bumps** (output contract unchanged — only impossible-to-encode code
+points are removed). New FakeLLM test: a `\ud835` in model output is stripped and the result is
+UTF-8 serializable.
+
+**Deviations:** none to schemas/error-codes/model-bindings. **Verification:** ruff clean; non-gpu
+suite 165 passed.
+
 ## T16 — prompt-hygiene polish: case-insensitive bans + cast-canonicalize temp fix (2026-08-11)
 
 Follow-up to T15 after inspecting a re-baked book. Two residuals:
