@@ -49,14 +49,17 @@ def min_chars(field: str, n: int) -> Validator:
 
 def banned_substrings(field: str, substrings: Sequence[str]) -> Validator:
     """Fail if ``output[field]`` contains any banned substring — kills markdown/URL
-    leakage (``**``, ``##``, ``http``, ``` ``` ```) and stray newlines."""
+    leakage (``**``, ``##``, ``http``, ``` ``` ```), stray newlines, and camera/scaffolding
+    words. Matching is **case-insensitive**: a sentence-initial "Wide shot"/"Watercolor"
+    must be caught the same as its lowercase form."""
 
     def _check(output: dict) -> str | None:
         value = output.get(field)
         if isinstance(value, str):
-            for sub in substrings:
-                if sub in value:
-                    return f"{field}: contains banned substring {sub!r}"
+            haystack = value.lower()
+            for original in substrings:
+                if original.lower() in haystack:
+                    return f"{field}: contains banned substring {original!r}"
         return None
 
     return _check

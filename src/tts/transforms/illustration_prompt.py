@@ -115,7 +115,8 @@ def build_illustration_prompt() -> Transform:
         name="illustration-prompt",
         # 0.2.0 (T15): template tightened to one instant / ≤3 figures / clean positive prompt +
         # per-character descriptor binding; validators catch camera/scaffolding leak; lower temp.
-        version="0.2.0",
+        # 0.2.1 (T16): case-insensitive banned match (catches "Wide shot") + "medium shot".
+        version="0.2.1",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.5 says qwen3:8b (absent); rebound in T3, see docs/models.md
         temperature=0.35,  # was 0.6 — less drift/montage, more reproducible
@@ -131,7 +132,8 @@ def build_illustration_prompt() -> Transform:
                 # medium/style words (drift) + the camera/quality "scaffolding" the model sometimes
                 # dumps into the positive field. Multi-word phrases only, to never trip real prose.
                 ["**", "\n", "style of", "photograph", "oil painting", "watercolor", "engraving",
-                 "close-up", "wide shot", "medium quality", "quality terms", "shot style"],
+                 "close-up", "wide shot", "medium shot", "medium quality", "quality terms",
+                 "shot style"],
             ),
             depicted_subset_of_cast(),
         ),

@@ -5,10 +5,12 @@ normally empty); the transform composes the collected verbatim descriptors into 
 paintable canonical visual description an illustrator can work from, choosing plain
 era-appropriate defaults where the evidence is silent.
 
-T15 (v0.2.0) deviation from §7.3's verbatim template: an added line tells the model to ignore any
+T15/T16 deviation from §7.3's verbatim template: an added line tells the model to ignore any
 "also called" alias that is a pronoun or another character's name (defends against upstream alias
-contamination binding the wrong appearance); ``temperature`` 0.5→0.3 for less gap-fill drift.
-Schema, options schema, and budget are unchanged.
+contamination binding the wrong appearance), and to describe only visible appearance — never
+personality words (which the banned-substring validator rejects). ``temperature`` is 0.5 (T16
+restored it from the T15 experiment at 0.3, which made weak-evidence characters deterministically
+emit "kind" and get skipped instead of a retry varying past the ban). Schema/options/budget same.
 
 Binding: §7.3 names ``qwen3:8b``, absent on the box; this transform binds the
 human-approved T3 rebind ``qwen3.5:9b`` (see ``docs/models.md`` and
@@ -44,7 +46,8 @@ _TEMPLATE = (
     '- "visual_description": 2–4 sentences a painter could work from — apparent age,\n'
     "  build, hair, face, characteristic clothing. Use ONLY the evidence; where the\n"
     "  evidence is silent, choose ONE plain era-appropriate default rather than\n"
-    "  something distinctive. No personality, no plot, no names of other characters.\n"
+    "  something distinctive. Describe only VISIBLE appearance — never personality\n"
+    "  words (kind, brave, cruel, gentle, wicked). No plot, no names of other characters.\n"
     '- "one_line": the same person in ≤20 words (used inside image prompts).\n'
     '- "tags": 3–8 short visual tags ("grey beard", "red cloak").\n'
     "Return JSON."
@@ -83,10 +86,12 @@ def build_cast_canonicalize() -> Transform:
     """Construct the ``cast-canonicalize`` transform (DESIGN §7.3)."""
     return Transform(
         name="cast-canonicalize",
-        version="0.2.0",  # T15: ignore pronoun/other-name aliases; lower temp
+        # 0.2.1 (T16): temp 0.3→0.5 (0.3 made weak-evidence characters deterministically emit a
+        # banned personality word and get skipped); template now bans personality words too.
+        version="0.2.1",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.3 says qwen3:8b (absent); rebound in T3, see docs/models.md
-        temperature=0.3,  # was 0.5 — less gap-fill drift
+        temperature=0.5,  # T16: back up from 0.3 so a retry can vary past the banned-word validator
         num_predict=400,
         input_budget=1200,
         over_budget="truncate",

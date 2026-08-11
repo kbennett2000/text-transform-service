@@ -114,6 +114,26 @@ async def test_camera_scaffolding_leak_is_422_validation_failed():
     assert all("banned substring" in r for r in exc.value.detail["reasons"])
 
 
+async def test_capitalized_camera_word_is_caught_case_insensitively():
+    # v0.2.1: the banned-substring match is case-insensitive, so a sentence-initial "Wide shot"
+    # (or "Medium shot") is rejected the same as its lowercase form.
+    for word in ("Wide shot", "Medium shot"):
+        leak = {
+            "prompt": (
+                f"{word} of a small brass machine vanishing from an octagonal table as four "
+                "gentlemen lean in beneath a shaded lamp in a cluttered room at night."
+            ),
+            "depicted": ["the Time Traveller"],
+            "shot": "wide",
+        }
+        js = json.dumps(leak)
+        fake = FakeLLMClient([js, js])  # both retry attempts leak the same way
+        with pytest.raises(TransformError) as exc:
+            await _run(fake, _options())
+        assert exc.value.status == 422
+        assert all("banned substring" in r for r in exc.value.detail["reasons"])
+
+
 async def test_over_long_montage_prompt_is_422_validation_failed():
     # v0.2.0: word ceiling 80 — an over-long prompt is drifting toward a multi-scene montage.
     montage = {

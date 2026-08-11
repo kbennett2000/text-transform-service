@@ -1,5 +1,23 @@
 # Cycle Log
 
+## T16 — prompt-hygiene polish: case-insensitive bans + cast-canonicalize temp fix (2026-08-11)
+
+Follow-up to T15 after inspecting a re-baked book. Two residuals:
+- **Case-sensitive banned match** let a sentence-initial "Wide shot"/"Medium shot" leak into ~1/8
+  illustration prompts (the ban list was lowercase). Fixed `banned_substrings`
+  (`src/tts/validators.py`) to match **case-insensitively**; added "medium shot" to
+  `illustration-prompt`'s ban list. **`illustration-prompt` → v0.2.1.** New FakeLLM test: capitalized
+  "Wide shot"/"Medium shot" now 422.
+- **`cast-canonicalize` temp 0.3 (from T15) was too low** — weak-evidence characters (e.g. Marfa,
+  described only by actions) deterministically emitted the banned personality word "kind" on every
+  retry and got skipped (`failed_units` → null description → generic look). Restored **temp 0.5** and
+  added a template line forbidding personality words (kind/brave/cruel/gentle/wicked) so the model
+  steers clear rather than relying on retry variance. **`cast-canonicalize` → v0.2.1.**
+
+**Deviations:** validator behaviour (case-insensitive) + two version bumps + one template line + temp.
+Options/output schemas, error codes, model bindings unchanged. **Verification:** ruff clean; non-gpu
+suite 164 passed. Image/description quality proven only by a downstream re-bake, never asserted.
+
 ## T15 — illustration/cast prompt hygiene: one scene, clean prompt, alias de-contamination (2026-08-11)
 
 Downstream (Scriptorium) illustrations showed the wrong person and mashed-up scenes: Marfa (a woman)
