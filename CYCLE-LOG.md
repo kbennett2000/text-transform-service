@@ -1,5 +1,37 @@
 # Cycle Log
 
+## T20 — `cast-mentions` v0.3.0: aliases are proper names only (2026-08-12)
+
+**Why.** A 239-character Scriptorium book shipped **731 published aliases, ~73% of them junk**.
+`"the old man"` was attached to **nine** different characters, `"Dmitri Fyodorovitch"` to six;
+`"Kalganov"` and `"Smurov"` — other characters entirely — were aliases of Fyodor Pavlovitch; and
+vocatives like `"my dear Alexey Fyodorovitch"` and `"Dmitri's father"` were being emitted as aliases.
+The v0.2.0 rule already forbade other characters' names and the model ignored it; worse, the rule
+said aliases may be "other NAMES **or noun-labels**", which explicitly licensed `"the old man"`.
+Contaminated aliases cross-link characters into the wrong scene downstream and put the wrong
+appearance into the illustration prompt.
+
+**Shipped** (`src/tts/transforms/cast_mentions.py`, `0.2.0 → 0.3.0`):
+- Aliases are **proper names or name-like forms only**. Role/relational labels (`"the old man"`,
+  `"the boy"`, `"brother"`, `"mamma"`, `"his father"`) and vocative/descriptive phrases
+  (`"my dear Alexey"`, `"Dmitri's father"`) are banned outright, with the rationale stated in the
+  template: *an alias is optional — a missing one is harmless, a wrong one corrupts the character.*
+- **`name` prefers a proper name** when the page offers one anywhere for that character, instead of
+  always the most specific label on the passage. `"the elder"` and `"Father Zossima"` were reducing
+  to two separate characters — one man with three portraits and three faces.
+- **`normalize=_drop_contaminated_aliases`** strips any alias equal to another mention's name on the
+  same page. Within one page the check is exact and deterministic, so clean rather than 422 and burn
+  the retry ladder — the same posture as T18's camera-framing strip.
+
+**Verification.** `uv run ruff check .` clean; `uv run pytest -m "not gpu"` → **170 passed, 13
+deselected**. Two new tests, shape only: a same-page cross-name alias is stripped (and a genuine
+variant survives), and an alias echoing its own mention's name is kept. No exact LLM wording asserted.
+
+**Deviations / notes.** The `name` rule is a behavioural change to §7.2's "most specific label on
+THIS page", made deliberately to stop the split-character problem; schema and budget unchanged.
+Consumer-side filtering (Scriptorium ADR-0027) stays as the safety net — this reduces what it has to
+throw away, it does not replace it.
+
 ## T19 — `illustration-prompt` v0.3.0: two figures, primary subject first (2026-08-12)
 
 **Why.** A review of a 458-plate Scriptorium book found illustrations that contradict their own

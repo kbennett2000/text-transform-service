@@ -102,3 +102,30 @@ async def test_empty_mentions_list_is_valid():
     fake = FakeLLMClient([json.dumps({"mentions": []})])
     result = await _run(fake, _fixture("02_description.txt"))
     assert result["output"] == {"mentions": []}
+
+
+async def test_same_page_cross_name_alias_is_stripped_not_422():
+    # T20: the template has forbidden other characters' names as aliases since v0.2.0 and the model
+    # still emits them ("Kalganov" as an alias of Fyodor Pavlovitch). Within one page the check is
+    # exact, so normalize cleans it instead of failing the page and burning the retry ladder.
+    dirty = {"mentions": [
+        {"name": "Fyodor Pavlovitch", "aliases": ["Kalganov", "Pavlovitch"],
+         "descriptors": [], "is_person": True},
+        {"name": "Kalganov", "aliases": [], "descriptors": [], "is_person": True},
+    ]}
+    fake = FakeLLMClient([json.dumps(dirty)])
+    result = await _run(fake, "A page of prose.")
+    first = result["output"]["mentions"][0]
+    assert "Kalganov" not in first["aliases"]   # another mention's name on this page
+    assert "Pavlovitch" in first["aliases"]     # a genuine variant survives
+    assert result["output"]["mentions"][1]["name"] == "Kalganov"
+
+
+async def test_alias_matching_own_name_is_kept():
+    # Only *other* characters' names are contamination; a mention echoing its own name is harmless.
+    out = {"mentions": [
+        {"name": "Weena", "aliases": ["weena"], "descriptors": [], "is_person": True},
+    ]}
+    fake = FakeLLMClient([json.dumps(out)])
+    result = await _run(fake, "A page of prose.")
+    assert result["output"]["mentions"][0]["aliases"] == ["weena"]
