@@ -187,3 +187,26 @@ async def test_happy_path_depicted_subset_no_warnings():
     assert set(result["output"]) >= {"prompt", "depicted", "shot"}
     assert result["meta"]["model"] == "qwen3.5:9b"
     assert "warnings" not in result["meta"]  # depicted ⊆ cast -> no soft finding
+
+
+async def test_more_than_three_depicted_is_422_schema_violation():
+    # v0.3.0 caps figures at two (prefer one); the output schema holds the hard bound at three.
+    # A 458-plate book measured 39% of plates asking for 3-4 figures, which the image model renders
+    # as duplicated or merged people (scriptorium ADR-0026).
+    crowded = {**_VALID_OUTPUT, "depicted": ["a", "b", "c", "d"]}
+    fake = FakeLLMClient(lambda *a: json.dumps(crowded))
+    with pytest.raises(TransformError) as exc:
+        await _run(fake, _options())
+    assert exc.value.status == 422
+
+
+async def test_depicted_order_is_preserved_for_the_consumer():
+    # Scriptorium conditions a plate on the FIRST depicted character's portrait and will not fall
+    # back to a secondary one (ADR-0026), so the order the model emits must survive the pipeline.
+    out = {**_VALID_OUTPUT, "depicted": ["the Time Traveller", "the Medical Man"]}
+    fake = FakeLLMClient([json.dumps(out)])
+    result = await _run(fake, _options(cast=[
+        {"name": "the Time Traveller", "one_line": "a restless inventor"},
+        {"name": "the Medical Man", "one_line": "a sceptical doctor"},
+    ]))
+    assert result["output"]["depicted"][0] == "the Time Traveller"

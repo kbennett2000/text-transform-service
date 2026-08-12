@@ -6,6 +6,11 @@ visual beat, weaving each depicted character's visual identifiers in (never a ba
 with the ``depicted`` set and a ``shot`` framing. Style/medium/artist words are caller-side;
 their appearance here is drift.
 
+v0.3.0 tightens the figure cap to **two** (prefer one) and requires ``depicted`` to name the
+primary subject first, spelled exactly as the cast list spells it. Scriptorium conditions a plate
+on the *first* depicted character's portrait and refuses to fall back to a secondary one
+(scriptorium ADR-0026), so both the order and the spelling are now load-bearing downstream.
+
 T15 (v0.2.0) deviation from §7.5's verbatim definition: the template now forbids multi-beat
 montages, caps figures at three, binds each character's descriptors to that character only, and
 requires the positive ``prompt`` to hold no camera/quality/label scaffolding; validators gained
@@ -85,8 +90,14 @@ Rules:
 - ONE frozen instant, one composition. 30–80 words, one line. Never a sequence:
   do not describe what happens before or after (no "before", "after", "then",
   "while ... rushes", "transitioning to").
-- At most THREE figures. If the beat implies a crowd, show a few representative
-  figures, not the crowd.
+- At most TWO figures, and prefer ONE. Choose the single most important person in
+  the beat and build the picture around them; anyone else is either omitted or a
+  background presence, never a second subject with their own action. If the beat
+  implies a crowd, show one or two representative figures, not the crowd.
+- "depicted" lists only the people actually in the frame, PRIMARY SUBJECT FIRST,
+  using each name EXACTLY as spelled in the Characters list above. Never invent a
+  fuller name, never add a surname that is not listed, and never use a bare role
+  or epithet ("the elder", "the woman") when a listed name fits.
 - Ground the scene: setting, time of day, atmosphere from the ledger.
 - For each depicted character, weave in their visual identifiers from the list
   above (condensed), not just their name. Attach each person's identifiers to
@@ -129,7 +140,7 @@ _OUTPUT_SCHEMA = {
     "required": ["prompt", "depicted", "shot"],
     "properties": {
         "prompt": {"type": "string", "minLength": 60, "maxLength": 600},
-        "depicted": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+        "depicted": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
         "shot": {"enum": ["wide", "medium", "close"]},
         "avoid": {
             "type": "array",
@@ -149,7 +160,11 @@ def build_illustration_prompt() -> Transform:
         # 0.2.1 (T16): case-insensitive banned match (catches "Wide shot") + "medium shot".
         # 0.2.2 (T18): strip camera-framing lead-ins ("A wide shot captures …") instead of 422ing
         # the plate — the model reliably re-emits them, burning the retry ladder (see normalize).
-        version="0.2.2",
+        # 0.3.0: figures ≤2 (was ≤3), primary subject first in `depicted`, names verbatim from the
+        # cast list. Measured on a 458-plate book: 78% of plates asked for 2+ figures and 39% for
+        # 3–4, which SDXL renders as duplicated/merged people; and invented names like "Pyotr
+        # Ilyitch Karamazov" broke the consumer's depicted→cast match (scriptorium ADR-0026).
+        version="0.3.0",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.5 says qwen3:8b (absent); rebound in T3, see docs/models.md
         temperature=0.35,  # was 0.6 — less drift/montage, more reproducible

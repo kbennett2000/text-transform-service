@@ -1,5 +1,36 @@
 # Cycle Log
 
+## T19 — `illustration-prompt` v0.3.0: two figures, primary subject first (2026-08-12)
+
+**Why.** A review of a 458-plate Scriptorium book found illustrations that contradict their own
+caption — "a woman kneels before the elder" rendered as two monks and no woman; "Pyotr Ilyitch sits
+while Madame Hohlakov shrieks" rendered as two young women and no Pyotr. Measuring that book:
+**78% of plates asked for 2+ figures and 39% for 3–4**, which SDXL renders as duplicated or merged
+people. The v0.2.0 cap of "at most THREE figures" was both too loose and routinely ignored. Separately,
+the model invents fuller names ("Pyotr Ilyitch **Karamazov**" for a cast entry spelled "Pyotr Ilyitch")
+and falls back on bare epithets ("the elder"), which breaks the consumer's depicted→cast match.
+
+**Shipped** (`src/tts/transforms/illustration_prompt.py`, version `0.2.2 → 0.3.0`):
+- Template: **at most TWO figures, prefer ONE** — pick the single most important person and build the
+  picture around them; anyone else is omitted or a background presence, never a second subject with
+  their own action.
+- Template: `depicted` lists only people in frame, **primary subject first**, spelled **exactly** as
+  the Characters list spells it — no invented surnames, no epithets where a listed name fits.
+- Output schema: `depicted` `maxItems` 4 → **3** (hard bound behind the softer template guidance).
+
+**Why order and spelling are now load-bearing.** Scriptorium ADR-0026 conditions a plate on the
+**first** depicted character's portrait and refuses to fall back to a secondary one. Previously it
+took the first label that happened to resolve, so an unresolvable primary silently handed the frame
+to someone else's face — the direct cause of both bad plates above.
+
+**Verification.** `uv run ruff check .` clean; `uv run pytest -m "not gpu"` → **168 passed, 13
+deselected**. Two new tests, bounds/shape only per the hard rule: >3 depicted is a 422 schema
+violation, and depicted order survives the pipeline. No exact LLM wording asserted.
+
+**Deviations / notes.** Template change is behavioural but not a schema-breaking one for the consumer
+(`depicted` was already an ordered array). The figure cap is guidance the model can still miss — the
+consumer's primary-only rule is the backstop, not this.
+
 ## T18 — strip camera-framing lead-ins instead of 422ing the plate (2026-08-11)
 
 A live bake stalled in P5: `illustration-prompt` kept opening with a camera-framing lead-in the
