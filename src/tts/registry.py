@@ -23,6 +23,13 @@ from typing import Literal
 # as ``validator(output, options)`` when it sets a ``wants_options`` marker on itself.
 Validator = Callable[..., str | None]
 
+# A normalizer takes the parsed, schema-valid output and returns a cleaned copy — the one place
+# a transform MAY rewrite its output (unlike validators, which only check). It runs after schema
+# validation and before validators, so it can scrub tolerated-but-unwanted fragments (e.g. a
+# camera-framing lead-in the model keeps emitting) instead of hard-failing the unit on them
+# (T18; same sanitize-don't-reject posture as the T17 surrogate scrub).
+Normalizer = Callable[[dict], dict]
+
 
 @dataclass(frozen=True)
 class Transform:
@@ -48,6 +55,10 @@ class Transform:
     num_ctx: int | None = None
     options_schema: dict = field(default_factory=dict)
     output_schema: dict = field(default_factory=dict)
+    # Optional output cleanup applied after schema validation, before validators (T18). The one
+    # hook that may rewrite output — use it to scrub tolerated-but-unwanted fragments rather than
+    # 422 the unit on them.
+    normalize: Normalizer | None = None
     validators: tuple[Validator, ...] = ()
     retries: int = 1
     temp_bump: float = 0.15

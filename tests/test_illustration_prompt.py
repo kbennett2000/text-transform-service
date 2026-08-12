@@ -114,24 +114,44 @@ async def test_camera_scaffolding_leak_is_422_validation_failed():
     assert all("banned substring" in r for r in exc.value.detail["reasons"])
 
 
-async def test_capitalized_camera_word_is_caught_case_insensitively():
-    # v0.2.1: the banned-substring match is case-insensitive, so a sentence-initial "Wide shot"
-    # (or "Medium shot") is rejected the same as its lowercase form.
-    for word in ("Wide shot", "Medium shot"):
-        leak = {
+async def test_camera_framing_leadin_is_stripped_not_422():
+    # v0.2.2 (T18): the model reliably opens with a camera-framing lead-in ("Wide shot of …",
+    # "A wide shot captures …"). The framing already lives in the `shot` field, so rather than
+    # 422 the plate and burn the retry ladder, the normalizer strips the lead-in and the (now
+    # clean) prompt passes on the first attempt. Case-insensitive; tidies leading capitalization.
+    for word in ("Wide shot", "A wide shot captures", "Medium shot of"):
+        framed = {
             "prompt": (
-                f"{word} of a small brass machine vanishing from an octagonal table as four "
-                "gentlemen lean in beneath a shaded lamp in a cluttered room at night."
+                f"{word} a small brass and ivory machine vanishing from an octagonal parlor "
+                "table as four Victorian gentlemen in frock coats lean intently in beneath a "
+                "shaded lamp in a cluttered, smoke-hazed room at night."
             ),
             "depicted": ["the Time Traveller"],
             "shot": "wide",
         }
-        js = json.dumps(leak)
-        fake = FakeLLMClient([js, js])  # both retry attempts leak the same way
-        with pytest.raises(TransformError) as exc:
-            await _run(fake, _options())
-        assert exc.value.status == 422
-        assert all("banned substring" in r for r in exc.value.detail["reasons"])
+        fake = FakeLLMClient([json.dumps(framed)])  # succeeds first try — no retry needed
+        result = await _run(fake, _options())
+        prompt = result["output"]["prompt"]
+        assert "shot" not in prompt.lower()
+        assert prompt.startswith("A small brass")  # lead-in gone, capitalization tidied
+        assert len(fake.calls) == 1
+
+
+async def test_mid_prompt_closeup_is_stripped_not_422():
+    # A "close-up" left mid-prompt is scrubbed too (not just lead-ins), so it no longer 422s.
+    framed = {
+        "prompt": (
+            "A small brass and ivory machine vanishing from an octagonal parlor table in "
+            "close-up as four Victorian gentlemen in frock coats lean intently in beneath a "
+            "shaded lamp in a cluttered, smoke-hazed room at night."
+        ),
+        "depicted": ["the Time Traveller"],
+        "shot": "close",
+    }
+    fake = FakeLLMClient([json.dumps(framed)])
+    result = await _run(fake, _options())
+    assert "close-up" not in result["output"]["prompt"].lower()
+    assert len(fake.calls) == 1
 
 
 async def test_over_long_montage_prompt_is_422_validation_failed():

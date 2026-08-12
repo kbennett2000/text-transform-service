@@ -24,8 +24,39 @@ possible future swap if an M1 blind read shows subject-selection weakness — no
 
 from __future__ import annotations
 
+import re
+
 from tts.registry import Transform
 from tts.validators import banned_substrings, depicted_subset_of_cast, word_range
+
+# A camera-framing lead-in the model likes to open with ("A wide shot captures …", "Medium shot
+# of …"). The `shot` enum field already carries the framing, so this scaffolding is redundant in
+# the positive prompt — and banned. Strip the lead-in (with its connective verb) …
+_SHOT_LEADIN = re.compile(
+    r"^\s*(?:an?\s+)?(?:extreme\s+)?(?:wide|medium|close)(?:[-\s]?up)?\s+shot\s+"
+    r"(?:of|captures?|shows?|reveals?|depicts?|framing|frames?)?\s*",
+    re.IGNORECASE,
+)
+# … and any camera phrase left elsewhere in the prompt (same phrases the validator bans).
+_SHOT_TERMS = re.compile(r"\b(?:wide shot|medium shot|close[-\s]?up|shot style)\b", re.IGNORECASE)
+
+
+def _strip_camera_framing(output: dict) -> dict:
+    """Scrub camera/shot framing from the positive ``prompt`` (T18).
+
+    The model intermittently opens with "A wide shot captures …" or leaves "close-up" mid-prompt;
+    those are banned scaffolding (the framing lives in the ``shot`` field). Rather than 422 the
+    whole plate and burn the retry ladder, remove them and tidy whitespace/leading capitalization.
+    """
+    prompt = output.get("prompt")
+    if not isinstance(prompt, str):
+        return output
+    cleaned = _SHOT_LEADIN.sub("", prompt)
+    cleaned = _SHOT_TERMS.sub("", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+    if cleaned:
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return {**output, "prompt": cleaned}
 
 # SYSTEM/USER template verbatim from DESIGN §7.5. render_messages passes `options` into the
 # Jinja render, so options.ledger/cast/era and the `{% for c in options.cast %}` loop resolve
@@ -116,7 +147,9 @@ def build_illustration_prompt() -> Transform:
         # 0.2.0 (T15): template tightened to one instant / ≤3 figures / clean positive prompt +
         # per-character descriptor binding; validators catch camera/scaffolding leak; lower temp.
         # 0.2.1 (T16): case-insensitive banned match (catches "Wide shot") + "medium shot".
-        version="0.2.1",
+        # 0.2.2 (T18): strip camera-framing lead-ins ("A wide shot captures …") instead of 422ing
+        # the plate — the model reliably re-emits them, burning the retry ladder (see normalize).
+        version="0.2.2",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # §7.5 says qwen3:8b (absent); rebound in T3, see docs/models.md
         temperature=0.35,  # was 0.6 — less drift/montage, more reproducible
@@ -125,6 +158,7 @@ def build_illustration_prompt() -> Transform:
         over_budget="reject",  # a page over budget is a paginator bug — fail loud, never truncate
         options_schema=_OPTIONS_SCHEMA,
         output_schema=_OUTPUT_SCHEMA,
+        normalize=_strip_camera_framing,
         validators=(
             word_range("prompt", 20, 80),  # hi 90→80: a longer prompt is drifting toward a montage
             banned_substrings(

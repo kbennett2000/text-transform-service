@@ -185,6 +185,11 @@ def _attempt_reason(
         except jsonschema.ValidationError as exc:
             return None, f"schema: {exc.message}", []
 
+    # Optional cleanup (T18): the one place output may be rewritten — scrub tolerated-but-unwanted
+    # fragments before the validators see it, so a stubborn phrase is fixed, not 422'd.
+    if transform.normalize is not None:
+        output = transform.normalize(output)
+
     warnings: list[str] = []
     for validator in transform.validators:
         # Options-aware validators (e.g. depicted ⊆ cast) opt in via a `wants_options`

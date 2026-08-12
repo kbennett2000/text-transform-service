@@ -1,5 +1,29 @@
 # Cycle Log
 
+## T18 — strip camera-framing lead-ins instead of 422ing the plate (2026-08-11)
+
+A live bake stalled in P5: `illustration-prompt` kept opening with a camera-framing lead-in the
+model loves — "A wide shot captures …", "Medium shot of …" — which contains the banned phrase
+"wide shot"/"medium shot". The hard validator 422'd every attempt, and because the model re-emitted
+the same lead-in on each retry, the whole plate burned its 10/60/300s ladder and failed. The framing
+already lives in the structured `shot` field, so the scaffolding in the positive prompt is pure
+redundancy.
+
+**Shipped.** A new **normalize** hook on `Transform` (the one place output may be rewritten; runs
+after schema validation, before validators — mirrors the T17 sanitize-don't-reject posture).
+`illustration-prompt` (**v0.2.1 → v0.2.2**) sets `_strip_camera_framing`: it removes a
+wide/medium/close **"… shot [of|captures|shows|…]"** lead-in and any stray `wide shot` / `medium
+shot` / `close-up` / `shot style`, then tidies whitespace + leading capitalization. The now-clean
+prompt passes on the first attempt instead of failing. The T16 case-insensitive-ban test is updated
+(a "Wide shot" lead-in is now stripped, not rejected); the mid-prompt scaffolding bans (e.g. "medium
+quality terms", "watercolor") still 422 as before.
+
+**Deviations:** new `Transform.normalize` field + pipeline step; one transform version bump. Error
+codes, model bindings, other transforms unchanged. **Verification:** ruff clean; non-gpu suite
+**166** passed; verified on the real failing prompt ("A wide shot captures a lean-but-soft man …" →
+"A lean-but-soft man …").
+
+
 ## T17 — scrub lone surrogates from model output (never 500 the response) (2026-08-11)
 
 An unattended 600-page Scriptorium bake (*The Brothers Karamazov*) died at page 301: `cast-mentions`
