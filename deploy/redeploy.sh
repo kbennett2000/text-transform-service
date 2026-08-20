@@ -31,7 +31,7 @@ ls src/tts/transforms/*.py
 
 # --- step 2: copy the tree to /opt, build the venv as the (non-root) service user, restart.
 sudo rsync -a --delete \
-  --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
+  --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '.env' \
   ./ "$DEST/"
 ( cd "$DEST" && uv sync )            # as the invoking non-root service user; NEVER sudo
 sudo systemctl restart "$SERVICE"

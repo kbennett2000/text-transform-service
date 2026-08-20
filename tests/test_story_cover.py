@@ -4,7 +4,7 @@ These exercise the transform's *mechanics* through the real pipeline — budget/
 reconciled five-field output schema (incl. the `category` enum), and the subject-neutral
 validators (`banned_substrings` + `word_range`, mirroring `image-prompt`) — with a deterministic
 FakeLLM. They never assert model wording (that is the GPU test's human-eyeball job). Real
-generation on `qwen3.5:9b` lives in `test_gpu.py`.
+generation on `qwen3.5:4b` lives in `test_gpu.py`.
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ _OUTPUT_KEYS = {"headline", "description", "imagePrompt", "category", "caption"}
 def test_transform_binding_and_shape():
     t = build_story_cover()
     assert t.name == "story-cover"
-    assert t.version == "0.1.0"
-    assert t.model == "qwen3.5:9b"
+    assert t.version == "0.2.0"  # T21: rebind to qwen3.5:4b
+    assert t.model == "qwen3.5:4b"  # T21 rebind (was qwen3.5:9b); see docs/models.md
     assert t.input_budget == 1200
     assert t.over_budget == "truncate"
     assert t.truncation_strategy == "head"
@@ -70,8 +70,8 @@ async def test_short_fixture_happy_path_not_truncated():
     assert set(result["output"]) == _OUTPUT_KEYS
     assert result["output"]["category"] == "BUSINESS"
     assert result["meta"]["transform"] == "story-cover"
-    assert result["meta"]["transform_version"] == "0.1.0"
-    assert result["meta"]["model"] == "qwen3.5:9b"
+    assert result["meta"]["transform_version"] == "0.2.0"
+    assert result["meta"]["model"] == "qwen3.5:4b"
     assert result["meta"]["truncated"] is False
     assert result["meta"]["attempts"] == 1
 

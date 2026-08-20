@@ -28,8 +28,10 @@ Brickfeed follow-up cycle reads these, not the request, as the contract):
    and is never rejected — which matches the request's "truncating the tail of a long title is
    harmless" intent. See NOTES-FOR-NEXT-CYCLES.md.
 
-Binding: like every production transform, this binds the human-approved T3 rebind
-``qwen3.5:9b`` (see ``docs/models.md`` and NOTES-FOR-NEXT-CYCLES.md).
+Binding: **``qwen3.5:4b``** (T21 rebind, human-approved — see ``docs/models.md``). Unlike the
+other production transforms (which keep the T3 ``qwen3.5:9b`` binding), story-cover is the
+~30×/cycle Brickfeed burst caller; the 9b cannot stay VRAM-resident alongside a concurrent
+on-box GPU workload, so it is bound to the smaller same-family 4b that fits and stays warm.
 """
 
 from __future__ import annotations
@@ -94,9 +96,14 @@ def build_story_cover() -> Transform:
     """Construct the ``story-cover`` transform (Brickfeed request §1, reconciled in T9)."""
     return Transform(
         name="story-cover",
-        version="0.1.0",
+        version="0.2.0",
         template=_TEMPLATE,
-        model="qwen3.5:9b",  # production binding; see docs/models.md (T3 rebind)
+        # T21 rebind: qwen3.5:9b -> qwen3.5:4b (human-approved, see docs/models.md). The 9b
+        # (~6.6 GB) cannot stay resident alongside a concurrent on-box GPU workload on the 12 GB
+        # card, so the ~30x/cycle Brickfeed burst spilled to CPU (~27-30 s/gen) and backed the
+        # single slot up past QUEUE_WAIT_S -> 503-busy storm. The 4b (~3.4 GB) fits, stays warm,
+        # and generates ~4x faster.
+        model="qwen3.5:4b",
         temperature=0.4,  # light headline/imagePrompt creativity, matches image-prompt
         num_predict=512,  # five fields (headline+description+imagePrompt+category+caption)
         input_budget=1200,

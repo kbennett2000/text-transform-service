@@ -123,3 +123,50 @@ Ollama 0.30.7 does **not** honor `options.flash_attn` (or a per-request KV cache
 `--cache-type-k/v`) once per model load, and per-request overrides are dropped. That is why the fix
 must live on the `ollama.service` unit and cannot be a `Transform` field or an `OllamaClient`
 option. If a future Ollama exposes per-request KV/attention control, this could move into TTS.
+
+## ✅ RESOLVED — `story-cover` rebind to `qwen3.5:4b` (cycle T21, 2026-08-20)
+
+Per the "never substitute silently" rule, this records a **human-approved** per-transform model
+change. Only `story-cover` moves; every other production transform keeps its T3 `qwen3.5:9b`
+binding.
+
+| Transform | Prior binding (T3) | **T21 binding** | Weight class | Present? |
+|---|---|---|---|---|
+| `story-cover` (Brickfeed, ~30×/cycle) | `qwen3.5:9b` (~6.6 GB) | **`qwen3.5:4b`** (~3.4 GB) | one class down | ✅ |
+| all other production transforms | `qwen3.5:9b` | `qwen3.5:9b` (unchanged) | — | ✅ |
+
+**Why (incident, 2026-08-20).** brickfeed-news logged `TTS-DEGRADED` for days:
+`status=0 unreachable` on the story-cover burst plus `413 over_budget` on opinion-gate. The
+service was up and correctly bound (`0.0.0.0:8712`, systemd, no crash/OOM) — the "unreachable"
+was **GPU-throughput collapse**. A concurrent on-box GPU workload (ComfyUI, ~6.9 GB resident on
+the 12 GB card) means `qwen3.5:9b` (~6.6 GB) **cannot stay resident**: Ollama spilled it to CPU
+(~27–30 s/generation) or failed to load it (`503 model_unavailable`). All generation serializes
+behind one slot (ADR-0005), so a ~30-call cron burst backed up past `QUEUE_WAIT_S` → a
+`503 busy` storm (journal 08:08–08:16: 69× busy), and requests crossing the consumer's ~120 s
+timeout returned nothing → `status=0`. This is the **GPU-phase-exclusivity** invariant
+(ADR-0008, system-overview §5) being violated by a concurrent workload.
+
+**Decision.** Bind the dominant burst caller to the same-family `qwen3.5:4b`, which **fits
+alongside the concurrent workload** (~3.4 + 6.9 GB < 12 GB), stays warm, and generates ~4×
+faster — so a burst drains inside the queue window. The quality-sensitive opinion tasks
+(`opinion-gate` safety classifier, `opinion-image-brief`) stay on `qwen3.5:9b`; they are fewer
+and not the burst. `qwen3.5:4b` is already pulled on the box (`ollama list`, unchanged from the
+T3 verbatim listing above — no pull required).
+
+**Complementary (not a model change):** `OLLAMA_KEEP_ALIVE=60m` and `MAX_QUEUE_DEPTH=12` set on
+the service (via `/opt/text-transform-service/.env`) keep the 4b warm across cron gaps and make
+residual contention fast-fail `503 busy` cleanly instead of timing out.
+
+**The rebind alone is necessary but NOT sufficient — GPU-phase exclusivity is the decisive
+lever (measured 2026-08-20).** With ComfyUI resident (6.9 GB), the 12 GB card had only ~3.3 GB
+free, so even `qwen3.5:4b` (needs ~3.7 GB) loaded **68% CPU / 32% GPU** and a story-cover
+generation took **~22 s (32 s cold)**. Freeing ComfyUI first (`POST http://127.0.0.1:8188/free`
+with `{"unload_models":true,"free_memory":true}` → 200; VRAM 6.9 GB → 0.3 GB, ~10 GB free) let
+the same 4b load **100% GPU**: **cold 5.0 s, warm ~1.2 s/generation**. At ~1–2 s warm, a 30-call
+story-cover burst serializes well under the 90 s queue window and the ~120 s consumer timeout.
+
+**Ops requirement:** the brickfeed cron must free the co-resident GPU workload's VRAM for its TTS
+window — call ComfyUI `/free` (verified above; ComfyUI auto-reloads on next interactive use), or
+otherwise ensure ComfyUI isn't holding VRAM during the cycle. This is the GPU-phase-exclusivity
+invariant (ADR-0008, system-overview §5). Wiring it into the cron/orchestrator is consumer-side,
+outside this repo.

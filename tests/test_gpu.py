@@ -355,9 +355,9 @@ async def test_scene_update_threading_then_illustration_prompt(client, capsys):
         print("=== end T6 outputs ===\n")
 
 
-# --- T9: story-cover on the real production model (qwen3.5:9b) -----------------------------
+# --- T9: story-cover on the real production model (qwen3.5:4b as of T21 rebind) ------------
 
-STORY_COVER_MODEL = "qwen3.5:9b"
+STORY_COVER_MODEL = "qwen3.5:4b"  # T21 rebind (was qwen3.5:9b); see docs/models.md
 _CATEGORIES = {
     "WORLD", "POLITICS", "BUSINESS", "TECHNOLOGY",
     "SCIENCE", "SPORTS", "CULTURE", "OPINION",
@@ -365,7 +365,7 @@ _CATEGORIES = {
 
 
 async def test_story_cover_all_fixtures_schema_valid_and_printed(client, capsys):
-    """Run all 5 synthetic story-cover fixtures through the real transform on qwen3.5:9b.
+    """Run all 5 synthetic story-cover fixtures through the real transform on qwen3.5:4b.
     The pipeline enforces the reconciled five-field schema (incl. the category enum) *and* the
     subject-neutral validators (banned_substrings + word_range), so a returned result (no
     TransformError, no 422) IS the schema+validator assertion. We never assert wording; the
@@ -406,7 +406,7 @@ async def test_story_cover_all_fixtures_schema_valid_and_printed(client, capsys)
         )
 
     with capsys.disabled():
-        print("\n\n=== T9 story-cover GPU outputs (qwen3.5:9b) ===")
+        print("\n\n=== T9 story-cover GPU outputs (qwen3.5:4b) ===")
         for line in lines:
             print(line)
         print("=== end story-cover outputs ===\n")
