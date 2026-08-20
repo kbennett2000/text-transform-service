@@ -1,5 +1,65 @@
 # Cycle Log
 
+## T21 — burst reachability + opinion-gate 413 hotfix (2026-08-20)
+
+**Why.** brickfeed-news logged `TTS-DEGRADED` for days: `status=0 unreachable` (~30×/cycle
+story-cover, 12× each opinion task) and recurring `413 over_budget` on opinion-gate (broke
+several columns the morning of 2026-08-20). Out-of-band incident, not a scheduled cycle.
+
+**Root cause (the reported "unreachable" is a misdiagnosis).** The service was up and correctly
+bound (`0.0.0.0:8712`, systemd `Restart=on-failure`, `NRestarts=0`, ~62 MB RSS, no OOM) — not a
+network/bind/crash fault. It was **GPU-throughput collapse**: a concurrent on-box GPU workload
+(ComfyUI, ~6.9 GB resident on the 12 GB card) prevents `qwen3.5:9b` (~6.6 GB) from staying
+resident, so generation spilled to CPU (~27–30 s/gen) or failed to load (`503 model_unavailable`).
+Generation serializes behind one slot (ADR-0005), so the ~30-call story-cover burst backed up
+past `QUEUE_WAIT_S=90` → `503 busy` storm (journal 08:08–08:16: **69× busy**, 21× 200, 2×
+model_unavailable); requests crossing the consumer's ~120 s timeout returned nothing →
+consumer-side `status=0`. Violates GPU-phase exclusivity (ADR-0008, system-overview §5). The
+413 was a too-low `input_budget`: the consumer's 25-item batch split is live, and real Brickfeed
+stories run >320 est-tok each (~3–4× calibration), so a 25-story batch exceeded 8000.
+
+**Shipped**
+- `src/tts/transforms/story_cover.py` (`0.1.0 → 0.2.0`): model rebind **`qwen3.5:9b` →
+  `qwen3.5:4b`** (~3.4 GB fits alongside the concurrent workload, stays warm, ~4× faster so the
+  burst drains). Human-approved substitution recorded in `docs/models.md`. Docstring binding
+  note updated.
+- `src/tts/transforms/opinion_gate.py` (`0.3.0 → 0.3.1`): `input_budget` **8000 → 16000**
+  (~640 est-tok/story headroom for a 25-item batch). `over_budget="reject"` **unchanged** — a
+  safety gate must never silently drop a story. Computed `num_ctx` 14144 → 22144 (< Qwen 32k).
+- `deploy/redeploy.sh`: `rsync --delete` now `--exclude '.env'` so the runtime queue-tune knobs
+  at `/opt/text-transform-service/.env` survive redeploys.
+- `docs/models.md`: T21 section recording the story-cover rebind (decision + rationale).
+- Runtime config (queue-tune, on the deployed unit's `EnvironmentFile`, not in the repo):
+  `OLLAMA_KEEP_ALIVE=60m` (keep 4b warm across cron gaps → no cold-load `model_unavailable`) and
+  `MAX_QUEUE_DEPTH=12` (residual overflow fast-fails `503 busy` immediately instead of hanging to
+  the consumer's timeout → `status=0`). `QUEUE_WAIT_S` left at 90; keyless LAN posture unchanged.
+
+**Verification.** `uv run ruff check .` clean; `uv run pytest -m "not gpu"` → **170 passed, 13
+deselected** (no exact LLM wording asserted). Live Ollama-level measurement on the box
+(2026-08-20) proved the mechanism: with ComfyUI resident (6.9 GB, ~3.3 GB free) a 4b story-cover
+gen ran **68% CPU / 32% GPU → ~22 s**; after `POST :8188/free` (VRAM → 0.3 GB, ~10 GB free) the
+same 4b loaded **100% GPU → cold 5.0 s, warm ~1.2 s/gen**. So at ~1–2 s warm a 30-call burst
+drains far inside the 90 s queue window. Post-deploy checks to run: a 25-item opinion-gate batch
+→ 200 (not 413) while an oversized batch still 413s; a ~30-call story-cover burst → all 200 (or
+clean fast `503 busy`, no `status=0`); next cron cycle shows no busy storm / model_unavailable /
+413.
+
+**GPU-phase exclusivity is REQUIRED, not optional (measured).** The 4b rebind alone does not meet
+the latency goal while ComfyUI holds VRAM — the card can't fit even a 3.7 GB model, so gens stay
+CPU-bound at ~22 s. The brickfeed cron must free the co-resident GPU workload (ComfyUI `/free`,
+verified) for its TTS window. Wiring that into the cron/orchestrator is consumer-side (out of this
+repo); see docs/models.md T21 for the recipe.
+
+**Deviations / notes.** (1) Model substitution (story-cover → 4b) is the sanctioned human-decision
+path per the "never substitute silently" rule — recorded in `docs/models.md`, not silent. (2)
+Out-of-band hotfix rather than a BUILD-PLAN cycle; scope limited to the incident. (3) The 9b
+opinion tasks still can't co-reside with the concurrent GPU workload; `MAX_QUEUE_DEPTH` covers the
+residual contention, but the durable fix is honoring GPU-phase exclusivity (ops, out of scope).
+(4) The single `422 validation_failed` (2026-08-17, opinion-gate) is model-output flakiness at
+large batch (truncated JSON), already mitigated by the retry ladder + `num_predict=5120` + the
+smaller 25-batches — no code change, monitor only. (5) Consumer's `maxStoriesPerCycle` left as-is:
+the 4b rebind should make the burst drain comfortably; cut it only if a cycle still shows overflow.
+
 ## T20 — `cast-mentions` v0.3.0: aliases are proper names only (2026-08-12)
 
 **Why.** A 239-character Scriptorium book shipped **731 published aliases, ~73% of them junk**.

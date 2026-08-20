@@ -135,15 +135,18 @@ def build_opinion_gate() -> Transform:
     """Construct the ``opinion-gate`` transform (Brickfeed request §2, reconciled in T10)."""
     return Transform(
         name="opinion-gate",
-        version="0.3.0",
+        version="0.3.1",
         template=_TEMPLATE,
         model="qwen3.5:9b",  # production binding; see docs/models.md (T3 rebind)
         temperature=0.0,  # deterministic classification gate
         num_predict=5120,  # T11: output ceiling sized to input_budget (~66 candidates × ~70)
-        input_budget=8000,  # T11: batch-shaped task (maxItems 100); 1600 413'd real batches
+        # T21: 8000 413'd live 25-item batches — real Brickfeed stories run >320 est-tok each
+        # (~3-4× the calibration profile), so a 25-story batch exceeds 8000. 16000 leaves ~640
+        # est-tok/story headroom. `reject` stays: a safety gate must never silently drop a story.
+        input_budget=16000,  # T21: raised 8000→16000 for 25-item batches of large-summary stories
         over_budget="reject",  # 413; never silently drop candidates (request's own choice)
-        # num_ctx left to the computed default (input_budget+num_predict+1024 = 14144); T12 fix
-        # for the 4096-default context starving generation on large batches (see docstring).
+        # num_ctx left to the computed default (input_budget+num_predict+1024 = 22144, < Qwen 32k);
+        # T12 fix for the 4096-default context starving generation on large batches (see docstring).
         options_schema={},
         output_schema=_OUTPUT_SCHEMA,
         validators=(

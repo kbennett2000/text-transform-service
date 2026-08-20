@@ -51,13 +51,13 @@ _VALID = {
 def test_transform_binding_and_shape():
     t = build_opinion_gate()
     assert t.name == "opinion-gate"
-    assert t.version == "0.3.0"  # T12: num_ctx fix for large-batch output truncation
+    assert t.version == "0.3.1"  # T21: input_budget raised for large-summary 25-item batches
     assert t.model == "qwen3.5:9b"
-    assert t.input_budget == 8000  # T11: raised from 1600 for real batch volumes
+    assert t.input_budget == 16000  # T21: raised from 8000 (real stories run >320 est-tok each)
     assert t.num_predict == 5120  # T11: output ceiling for a verdict-per-candidate batch
-    # T12: computed context window = input_budget + num_predict + 1024 headroom. Ollama's 4096
-    # default starved generation at ~34-candidate volume (prompt filled the window) → 422.
-    assert t.num_ctx == 8000 + 5120 + 1024  # == 14144
+    # Computed context window = input_budget + num_predict + 1024 headroom (T12 num_ctx fix;
+    # Ollama's 4096 default starved generation at volume → 422). T21 raised input_budget → 22144.
+    assert t.num_ctx == 16000 + 5120 + 1024  # == 22144, still < Qwen 32k
     assert t.over_budget == "reject"  # T11: unchanged — never truncate a batch
     assert t.options_schema == {}
     # ADR-0007 condition 1: the verdict enum is closed and includes an explicit `uncertain`.
@@ -74,7 +74,7 @@ async def test_happy_path_mixed_verdicts():
     assert {v["id"] for v in verdicts} == {"a1", "b2"}
     assert all(v["verdict"] in _VERDICTS for v in verdicts)
     assert result["meta"]["transform"] == "opinion-gate"
-    assert result["meta"]["transform_version"] == "0.3.0"
+    assert result["meta"]["transform_version"] == "0.3.1"
     assert result["meta"]["model"] == "qwen3.5:9b"
     assert result["meta"]["attempts"] == 1
 
@@ -117,11 +117,11 @@ async def test_realistic_batch_passes_budget():
 
 
 async def test_over_budget_is_413_before_any_llm_call():
-    # over_budget="reject": an input above the 8000-token budget (T11) must 413 *before*
-    # generation. 100 padded candidates (~11.6k est-tokens) clears the raised budget; the
+    # over_budget="reject": an input above the 16000-token budget (T21) must 413 *before*
+    # generation. 100 padded candidates (~21.6k est-tokens) clears the raised budget; the
     # LLM is never called.
     big = json.dumps(
-        [{"id": f"s{i}", "title": "word " * 40, "summary": "word " * 40} for i in range(100)]
+        [{"id": f"s{i}", "title": "word " * 80, "summary": "word " * 80} for i in range(100)]
     )
     fake = FakeLLMClient([json.dumps(_VALID)])
     with pytest.raises(TransformError) as exc:
