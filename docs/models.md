@@ -165,8 +165,38 @@ with `{"unload_models":true,"free_memory":true}` → 200; VRAM 6.9 GB → 0.3 GB
 the same 4b load **100% GPU**: **cold 5.0 s, warm ~1.2 s/generation**. At ~1–2 s warm, a 30-call
 story-cover burst serializes well under the 90 s queue window and the ~120 s consumer timeout.
 
-**Ops requirement:** the brickfeed cron must free the co-resident GPU workload's VRAM for its TTS
-window — call ComfyUI `/free` (verified above; ComfyUI auto-reloads on next interactive use), or
-otherwise ensure ComfyUI isn't holding VRAM during the cycle. This is the GPU-phase-exclusivity
-invariant (ADR-0008, system-overview §5). Wiring it into the cron/orchestrator is consumer-side,
-outside this repo.
+**Ops requirement (⚠️ SUPERSEDED by T22 / ADR-0009 — see the section below):** the brickfeed cron
+must free the co-resident GPU workload's VRAM for its TTS window — call ComfyUI `/free` (verified
+above; ComfyUI auto-reloads on next interactive use), or otherwise ensure ComfyUI isn't holding
+VRAM during the cycle. This is the GPU-phase-exclusivity invariant (ADR-0008, system-overview §5).
+Wiring it into the cron/orchestrator is consumer-side, outside this repo. *As of T22 this is no
+longer the caller's job:* both services free their own VRAM and coordinate via the shared `flock`.
+
+## ✅ RESOLVED — server-side GPU tenancy lock (cycle T22, 2026-08-20)
+
+The caller-side `/free` convention above is **reversed**. GPU exclusivity now lives *inside* the two
+on-box GPU tenants — text-transform-service (Ollama) and imagegen-service (ComfyUI) — which
+coordinate through one shared advisory file lock (`flock(2)`, `LOCK_EX`) on `/run/gpu-tenant.lock`
+(fallback `/var/lock/gpu-tenant.lock`). Clients (brickfeed, Chronicle) change nothing and never
+touch another service's model lifecycle. See ADR-0009.
+
+**Protocol (this service's half).** Every generation runs inside a lease: acquire → ensure model →
+**drain** → **free** → release.
+- **Hold-and-drain.** The flock is taken on idle→busy and held across successive `Semaphore(1)`
+  slots while work keeps arriving, so a ~30-call story-cover burst loads the model **once**.
+- **Free before release.** On going idle for `GPU_LOCK_IDLE_GRACE_S` (default 5 s), or on hitting
+  `GPU_LOCK_MAX_HOLD_S` (default 60 s), the service unloads its own model (Ollama `keep_alive:0`)
+  **then** drops the flock — so the next tenant acquires into clear VRAM.
+- **MAX_HOLD fairness (non-preemptive).** If work is still queued at MAX_HOLD, the current
+  generation finishes, then the service frees, releases, and re-acquires at the back of the queue.
+- **Fail-open.** An unusable/locked-out lockfile (or `GPU_LOCK_ENABLED=false`) logs a warning and
+  proceeds without the lock. Crash-safety is free — the kernel releases `flock` on process death.
+
+This service frees only its **own** VRAM; imagegen frees ComfyUI on its side. The three things that
+**must match imagegen byte-for-byte:** the lockfile path, the free-before-release ordering, and the
+fail-open semantics. Env knobs: `GPU_LOCK_ENABLED`, `GPU_LOCK_PATH`, `GPU_LOCK_MAX_HOLD_S`,
+`GPU_LOCK_IDLE_GRACE_S`, `GPU_LOCK_ACQUIRE_TIMEOUT_S` (DESIGN §9).
+
+**Relation to the T21 rebind.** The story-cover→4b rebind and the `.env` queue-tune above are still
+correct and complementary; the lock removes the *thrash* (per-call evict/reload under contention)
+that the rebind only mitigated. `OLLAMA_KEEP_ALIVE` is now harmless — the lease drives unload on idle.

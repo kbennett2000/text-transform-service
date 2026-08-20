@@ -2,6 +2,22 @@
 
 Out-of-scope discoveries parked here during T1 (not implemented — scope fence).
 
+## From T22 — GPU tenancy lock: the imagegen-service mirror is the other half
+- **This repo shipped only TTS's half of ADR-0009.** The lock is useless until imagegen-service
+  (the ComfyUI front, :8189) implements the same acquire→drain→**free→release** discipline around
+  its `/prompt` submit path, freeing ComfyUI's VRAM (`POST :8188/free
+  {"unload_models":true,"free_memory":true}`) before it releases. That change lives in the
+  imagegen repo, not here.
+- **Three things MUST match byte-for-byte** or the two tenants won't actually exclude each other:
+  (1) the lockfile **path** (`/run/gpu-tenant.lock`, fallback `/var/lock/gpu-tenant.lock`);
+  (2) **free-before-release ordering**; (3) **fail-open semantics**. Timing knobs (MAX_HOLD,
+  IDLE_GRACE, ACQUIRE_TIMEOUT) may differ per service — TTS defaults 60/5/120 s; imagegen's
+  MAX_HOLD is expected higher (long renders). If TTS's `GPU_LOCK_PATH` or the lease protocol ever
+  changes, the imagegen side must be told explicitly (see `gpu-lock-spec.md`).
+- **Deploy note:** `/run` is tmpfs (cleared on reboot); `os.open(..., O_CREAT)` recreates the
+  lockfile, so nothing to provision. Both services need write access to the lock's directory as
+  their run user.
+
 ## From T13 — Ollama host bindings that large-context transforms depend on
 - **q8_0 KV cache is a HOST binding, required for large `opinion-gate` batches.** T12's computed
   `num_ctx` (14144) was necessary but not sufficient: at that context, `qwen3.5:9b` with the

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from tts import __version__
 from tts.concurrency import GenerationGate
 from tts.config import Settings, get_settings
+from tts.gpu_lock import GpuLease
 from tts.health import is_ready, probe_ollama
 from tts.llm import LLMBackendError, OllamaClient
 from tts.logging_setup import configure_logging
@@ -57,6 +58,11 @@ async def lifespan(app: FastAPI):
     """
     await warn_missing_models(app.state.llm, REGISTRY, logger)
     yield
+    # Shutdown: drop the GPU lease (free VRAM + release the flock) so a restart hands the
+    # GPU off cleanly rather than relying on the kernel's crash-release (T22, ADR-0009).
+    lease = getattr(app.state, "gen_lease", None)
+    if lease is not None:
+        await lease.aclose()
 
 
 app = FastAPI(title="text-transform-service", version=__version__, lifespan=lifespan)
@@ -78,6 +84,10 @@ app.state.llm = OllamaClient(
     base_url=app.state.settings.ollama_url,
     keep_alive=app.state.settings.ollama_keep_alive,
 )
+# Cross-process GPU tenancy lease (T22, ADR-0009). Layered above the slot: holds the shared
+# flock across a burst and frees this service's VRAM (Ollama unload) before releasing, so
+# only one GPU tenant runs at a time. Fail-open — an unusable lockfile proceeds unlocked.
+app.state.gen_lease = GpuLease.from_settings(app.state.settings, app.state.llm)
 
 # Register transforms per the resolved environment (echo only when TTS_ENV=dev).
 register_all(app.state.settings)
@@ -286,6 +296,8 @@ async def transform(
             req.options,
             llm,
             app.state.gen_gate,
+            app.state.gen_lease,
+            request.state.request_id,
         )
         request.state.log_meta = result["meta"]
         return result
@@ -329,6 +341,12 @@ async def unload_models(req: UnloadRequest, llm=Depends(get_llm_client)):
                     break
                 await asyncio.sleep(_UNLOAD_CONFIRM_INTERVAL_S)
                 still_loaded = set(await llm.list_loaded())
+        # A manual unload freed VRAM under the slot; drop the GPU lease too if held, so the
+        # peer can proceed (T22, ADR-0009). The route stays fully functional; it is just no
+        # longer what callers rely on for GPU exclusivity.
+        lease = getattr(app.state, "gen_lease", None)
+        if lease is not None:
+            await lease.release_if_held("manual-unload")
         unloaded = [m for m in targets if m not in still_loaded]
         return {"unloaded": unloaded}
     except LLMBackendError as exc:

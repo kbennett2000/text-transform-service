@@ -18,6 +18,21 @@ def _int_env(name: str, default: int) -> int:
     return int(raw)
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw)
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    """Parse a boolean env var. Truthy: 1/true/yes/on; falsy: 0/false/no/off (case-insensitive)."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     """Resolved service configuration (DESIGN §9)."""
@@ -40,6 +55,20 @@ class Settings:
     # Deployment environment. "dev" enables dev-only transforms (e.g. echo). Not part
     # of the DESIGN §9 table; introduced in T2 for the echo dev gate.
     env: str = "prod"
+    # Server-side GPU tenancy lock (T22, ADR-0009). A shared advisory flock both this
+    # service and imagegen-service honor so only one owns the GPU at a time — held across
+    # a burst (hold-and-drain), freed (Ollama unload) before release. All optional and
+    # fail-open: an unusable lockfile logs a warning and generation proceeds unlocked.
+    gpu_lock_enabled: bool = True
+    # Must be byte-identical to the path imagegen-service uses (the only coordination point).
+    gpu_lock_path: str = "/run/gpu-tenant.lock"
+    # Max seconds to hold the lease before yielding to a waiting peer (non-preemptive).
+    gpu_lock_max_hold_s: float = 60.0
+    # Keep the lease this long after the last queued item, to bridge a same-tenant gap.
+    gpu_lock_idle_grace_s: float = 5.0
+    # Max wait to acquire the lock before failing open. Must exceed imagegen's MAX_HOLD —
+    # a long render legitimately makes this service wait.
+    gpu_lock_acquire_timeout_s: float = 120.0
 
     @property
     def auth_enabled(self) -> bool:
@@ -68,6 +97,11 @@ class Settings:
             primary_model=os.getenv("TTS_PRIMARY_MODEL", "qwen3.5:9b"),
             log_level=os.getenv("TTS_LOG_LEVEL", "INFO"),
             env=os.getenv("TTS_ENV", "prod"),
+            gpu_lock_enabled=_bool_env("GPU_LOCK_ENABLED", True),
+            gpu_lock_path=os.getenv("GPU_LOCK_PATH", "/run/gpu-tenant.lock"),
+            gpu_lock_max_hold_s=_float_env("GPU_LOCK_MAX_HOLD_S", 60.0),
+            gpu_lock_idle_grace_s=_float_env("GPU_LOCK_IDLE_GRACE_S", 5.0),
+            gpu_lock_acquire_timeout_s=_float_env("GPU_LOCK_ACQUIRE_TIMEOUT_S", 120.0),
         )
 
 

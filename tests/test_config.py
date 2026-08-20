@@ -17,6 +17,12 @@ ENV_VARS = [
     ("MAX_QUEUE_DEPTH", "32", "max_queue_depth", 0, 32),
     ("TTS_PRIMARY_MODEL", "qwen3.5:2b", "primary_model", "qwen3.5:9b", "qwen3.5:2b"),
     ("TTS_LOG_LEVEL", "DEBUG", "log_level", "INFO", "DEBUG"),
+    # GPU tenancy lock (T22, ADR-0009).
+    ("GPU_LOCK_ENABLED", "false", "gpu_lock_enabled", True, False),
+    ("GPU_LOCK_PATH", "/tmp/g.lock", "gpu_lock_path", "/run/gpu-tenant.lock", "/tmp/g.lock"),
+    ("GPU_LOCK_MAX_HOLD_S", "30", "gpu_lock_max_hold_s", 60.0, 30.0),
+    ("GPU_LOCK_IDLE_GRACE_S", "2.5", "gpu_lock_idle_grace_s", 5.0, 2.5),
+    ("GPU_LOCK_ACQUIRE_TIMEOUT_S", "200", "gpu_lock_acquire_timeout_s", 120.0, 200.0),
 ]
 
 
@@ -38,6 +44,11 @@ def test_defaults_when_env_unset():
     assert s.max_queue_depth == 0
     assert s.primary_model == "qwen3.5:9b"
     assert s.log_level == "INFO"
+    assert s.gpu_lock_enabled is True
+    assert s.gpu_lock_path == "/run/gpu-tenant.lock"
+    assert s.gpu_lock_max_hold_s == 60.0
+    assert s.gpu_lock_idle_grace_s == 5.0
+    assert s.gpu_lock_acquire_timeout_s == 120.0
 
 
 @pytest.mark.parametrize("name,override,attr,default,expected", ENV_VARS)
