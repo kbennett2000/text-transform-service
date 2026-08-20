@@ -1,5 +1,62 @@
 # Cycle Log
 
+## T22 — server-side GPU tenancy lock (shared flock lease) (2026-08-20)
+
+**Why.** One RTX 5070 hosts two GPU tenants — this service (Ollama) and imagegen-service
+(ComfyUI). When ComfyUI kept a checkpoint warm (~6.9 GB), the 9B model couldn't stay resident and
+evicted/reloaded per call → the `status=0` / `503 busy` / `413` storms of T21. Exclusivity had
+been declared *caller-side* (ADR-0008 + models.md + DESIGN §9: the cron POSTs ComfyUI `/free`
+before its TTS window). The owner **reversed** that: a client should never drive another service's
+model lifecycle. Exclusivity moves server-side, into the two services, coordinated by one shared
+lock. This cycle is TTS's half; imagegen gets the mirror in its own repo. Out-of-band cycle.
+
+**What it does.** A single advisory `flock` (`LOCK_EX`) on `/run/gpu-tenant.lock` (fallback
+`/var/lock/gpu-tenant.lock`) that both tenants honor. Whoever holds it owns the GPU: it loads its
+model, **drains all currently-queued work under one lease** (hold-and-drain — a ~30-call burst
+loads once), **frees its own VRAM (Ollama `keep_alive:0`) before releasing**, then hands off.
+`flock` gives crash-safety (kernel releases on death — no TTL/heartbeat) and rough-FIFO fairness.
+The lease is layered *above* the ADR-0005 `Semaphore(1)`: the flock is acquired *inside* the slot
+(the slot-winner is the sole acquirer → no in-process race), held *across* slots, and freed by an
+idle timer. MAX_HOLD yields non-preemptively to a waiting peer. Fail-open by contract — an unusable
+lockfile logs a warning and generation proceeds unlocked. This service frees only its own VRAM; it
+never touches ComfyUI.
+
+**Shipped**
+- `docs/adr/0009-gpu-tenancy-lock.md` (new): the decision; supersedes the caller-side GPU-phase-
+  exclusivity clause of ADR-0008 (leaves its queue/reload/readiness decisions intact).
+- `src/tts/gpu_lock.py` (new): `GpuLease` — `region()` (hold-across-burst busyness counting),
+  `acquire_for_generation()` (flock acquire + MAX_HOLD yield, inside the slot), `_free_and_release`
+  (free-before-release), idle-free timer, `release_if_held`/`aclose`. Logger `tts.gpu_lock`.
+- `src/tts/pipeline.py`: `run_transform` gains optional `lease` + `request_id`; wraps the slot in
+  `lease.region(...)` and calls `acquire_for_generation` before `ensure_loaded`. No lease → no-op.
+- `src/tts/app.py`: builds `app.state.gen_lease` (`GpuLease.from_settings`), threads it + the
+  request id into `run_transform`; manual `/v1/models/unload` now also drops the lease; lifespan
+  `aclose`s it on shutdown.
+- `src/tts/config.py`: five optional env knobs (`GPU_LOCK_ENABLED`, `GPU_LOCK_PATH`,
+  `GPU_LOCK_MAX_HOLD_S`, `GPU_LOCK_IDLE_GRACE_S`, `GPU_LOCK_ACQUIRE_TIMEOUT_S`) + `_float_env`/
+  `_bool_env` helpers. Documented in DESIGN §9.
+- Docs: DESIGN §9 (env rows + GPU-coexistence rewrite), system-overview §5 (invariant 5),
+  docs/models.md (Ops requirement marked superseded + new resolved section), ADR-0008 status note.
+- Tests: `tests/test_gpu_lock.py` (held-while-busy = one load/burst, free-before-release ordering,
+  fail-open on unopenable lockfile + disabled, MAX_HOLD yield); `tests/test_config.py` rows;
+  `tests/conftest.py` autouse fixture keeps the suite off the real `/run/gpu-tenant.lock`.
+
+**Verification.** `uv run ruff check .` clean; `uv run pytest -m "not gpu"` → **180 passed, 13
+deselected** (no exact LLM wording asserted). On-box checks to run: a ~30-call burst → one
+`gpu-lock acquired` / one model load / `drained ~30` / one `freed`+`released`, all 200; with a peer
+holding the lock, a TTS call blocks on acquire then proceeds into clear VRAM (no eviction storm);
+`kill -9` mid-lease → lock immediately re-acquirable; `GPU_LOCK_ENABLED=false` → fail-open, still
+serves; `make test-gpu` on the 5070.
+
+**Deviations / notes.** (1) Out-of-band hotfix, not a BUILD-PLAN cycle (BUILD-PLAN defines only
+T1–T10). (2) Supersedes only the caller-side clause of ADR-0008, not its other decisions. (3)
+Coordination contract with imagegen-service — the lockfile **path**, **free-before-release
+ordering**, and **fail-open semantics** must match byte-for-byte; timing knobs may differ. The
+imagegen mirror is tracked separately (its repo). (4) Complements, does not replace, the T21
+story-cover→4b rebind and `.env` queue-tune; the lock removes the *thrash*, the rebind keeps the
+burst caller light. `OLLAMA_KEEP_ALIVE` is now harmless (the lease drives unload on idle). (5) The
+manual `/v1/models/unload` route stays functional but is no longer the exclusivity mechanism.
+
 ## T21 — burst reachability + opinion-gate 413 hotfix (2026-08-20)
 
 **Why.** brickfeed-news logged `TTS-DEGRADED` for days: `status=0 unreachable` (~30×/cycle

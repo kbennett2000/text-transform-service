@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import time
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import jsonschema
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     # The annotation is a string under `from __future__ import annotations`, so a
     # type-only import suffices.
     from tts.concurrency import GenerationGate
+    from tts.gpu_lock import GpuLease
 
 logger = logging.getLogger("tts.pipeline")
 
@@ -214,8 +216,15 @@ async def run_transform(
     options: dict,
     llm,
     gate: GenerationGate,
+    lease: GpuLease | None = None,
+    request_id: str | None = None,
 ) -> dict:
-    """Run the full §3 pipeline for one request. Raises :class:`TransformError`."""
+    """Run the full §3 pipeline for one request. Raises :class:`TransformError`.
+
+    ``lease`` (T22, ADR-0009) is the optional cross-process GPU tenancy lease. When present,
+    the generation region runs inside ``lease.region(...)`` and the flock is acquired inside
+    the slot before generating, so a burst holds the GPU once and drains under one lease.
+    """
     _validate_options(transform, options)
     text, truncated = _enforce_budget(transform, text)
     input_tokens_est = estimate_tokens(text)
@@ -227,12 +236,20 @@ async def run_transform(
     attempts = 0
     raw = ""  # last attempt's raw output; surfaced in the 422 detail on total failure
 
+    # Hold the GPU lease across the whole region (outside the slot) so a burst is not freed
+    # between two queued requests (T22, ADR-0009). No-op when no lease is configured.
+    region = lease.region(request_id) if lease is not None else nullcontext()
     # Acquire the single-in-flight generation slot, queueing up to queue_wait_s and
     # bounded by max_queue_depth (ADR-0005 / T14 ADR-0008). Timeout or a full queue ->
     # 503 busy. The gate releases the slot on exit.
-    async with gate.slot() as queued_ms:
+    async with region, gate.slot() as queued_ms:
         gen_start = time.perf_counter()
         try:
+            # Own the GPU before generating: acquire the shared flock inside the slot, so
+            # the slot-winner is the sole acquirer and the burst amortizes one model load
+            # (T22, ADR-0009). Fails open if the lockfile is unusable.
+            if lease is not None:
+                await lease.acquire_for_generation(transform.model, request_id)
             # Reload-on-demand inside the slot: a prior unload / idle expiry can't leave
             # this caller with model_unavailable (T14).
             await llm.ensure_loaded(transform.model)

@@ -4,6 +4,10 @@
 **Date:** 2026-07-14
 
 > Extends ADR-0005 (single in-flight generation). Cycle T14.
+>
+> **Partially superseded by ADR-0009 (T22):** the Constraints clause "GPU-phase exclusivity is
+> the caller's job" no longer holds — exclusivity is now enforced server-side via a shared
+> `flock`. The bounded-queue / reload-on-demand / readiness decisions here remain in force.
 
 ## Context
 

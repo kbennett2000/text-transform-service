@@ -526,6 +526,11 @@ Nothing in this section changes service code — it constrains the error taxonom
 | `MAX_QUEUE_DEPTH` | `0` | Max requests waiting for the slot; `0` = unbounded. Overflow fast-fails `503 busy` (T14, ADR-0008) |
 | `TTS_PRIMARY_MODEL` | `qwen3.5:9b` | Model whose residency defines readiness (`/ready`, `/health.ready`; T14, ADR-0008) |
 | `TTS_LOG_LEVEL` | `INFO` | |
+| `GPU_LOCK_ENABLED` | `true` | Server-side GPU tenancy lock on/off; `false` = pre-T22 (caller-side) behavior (T22, ADR-0009) |
+| `GPU_LOCK_PATH` | `/run/gpu-tenant.lock` | Shared advisory lockfile; **must be byte-identical to imagegen-service's** (T22, ADR-0009) |
+| `GPU_LOCK_MAX_HOLD_S` | `60` | Max seconds to hold the lease before yielding to a waiting peer (non-preemptive) (T22, ADR-0009) |
+| `GPU_LOCK_IDLE_GRACE_S` | `5` | Keep the lease this long after the last queued item before freeing (T22, ADR-0009) |
+| `GPU_LOCK_ACQUIRE_TIMEOUT_S` | `120` | Max wait to acquire before failing open; must exceed imagegen's MAX_HOLD (T22, ADR-0009) |
 
 **Logging:** one structured line per request (JSON): `ts, request_id, transform, status, attempts, input_tokens_est, truncated, queued_ms, latency_ms, error_code?`. Request id also returned in an `X-Request-Id` response header.
 
@@ -544,7 +549,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-**GPU coexistence:** this service never introspects the GPU and never coordinates with imagegen-service. Coordination is the caller's job (Scriptorium orchestrator calls `/v1/models/unload` before rendering). `OLLAMA_KEEP_ALIVE=5m` means idle periods self-unload anyway.
+**GPU coexistence (T22, ADR-0009 — supersedes the caller-side stance below):** this service now coordinates GPU exclusivity *server-side* with imagegen-service through one shared advisory `flock` (`GPU_LOCK_PATH`, default `/run/gpu-tenant.lock`). It holds the lock across a burst (hold-and-drain), unloads its own model (Ollama `keep_alive:0`) **before** releasing, and fails open if the lockfile is unusable. It still frees only its own VRAM — it never touches ComfyUI. `/v1/models/unload` stays functional but is no longer what callers rely on for exclusivity. `GPU_LOCK_ENABLED=false` restores the prior behavior. *Prior stance (superseded):* the service never coordinated with imagegen; coordination was the caller's job (Scriptorium orchestrator / brickfeed cron calling `/v1/models/unload` or ComfyUI `/free` before rendering).
 
 ## 10. Testing strategy
 
